@@ -7,8 +7,8 @@ import plotly.express as px
 # ------------------------------------------------------------
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", layout="wide")
 
-st.markdown(
-    """
+# Style the app
+st.markdown("""
     <style>
         [data-testid="stSidebar"] {
             background-color: #f4f1fb;
@@ -16,13 +16,8 @@ st.markdown(
         h1, h2, h3 {
             color: #3b0764;
         }
-        .metric-label {
-            font-weight: bold;
-        }
     </style>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 st.title("🎥 FreeFuse Engagement Dashboard")
 st.caption("An interactive visualization of ASPIRA students' engagement with FreeFuse videos.")
@@ -55,7 +50,7 @@ def load_and_clean(path: str) -> pd.DataFrame:
             & (~df["Video_Name"].str.contains(r"[^a-zA-Z0-9\s\-:,.!?]", na=False))
         ]
 
-    # Combine date + time
+    # Combine date + time and convert to proper datetime
     if "View_Date" in df.columns:
         if "View_Time" in df.columns:
             df["View_Timestamp"] = pd.to_datetime(
@@ -67,9 +62,14 @@ def load_and_clean(path: str) -> pd.DataFrame:
     else:
         df["View_Timestamp"] = pd.NaT
 
+    # Create a proper datetime.date column for filtering
     df["View_DateOnly"] = pd.to_datetime(df["View_Timestamp"], errors="coerce").dt.date
 
-    # Convert duration
+    # Ensure that View_DateOnly is actually a datetime.date (not string)
+    df = df[df["View_DateOnly"].notna()]
+    df["View_DateOnly"] = pd.to_datetime(df["View_DateOnly"], errors="coerce").dt.date
+
+    # Duration conversion
     if "Viewing_Duration_Sec" in df.columns:
         df["Viewing_Duration_Sec"] = pd.to_numeric(df["Viewing_Duration_Sec"], errors="coerce")
         df["Viewing_Duration_Min"] = df["Viewing_Duration_Sec"] / 60
@@ -95,10 +95,10 @@ st.sidebar.header("🔎 Filters")
 video_filter = st.sidebar.multiselect("🎬 Select Video", sorted(df["Video_Name"].unique()))
 completion_filter = st.sidebar.radio("✅ Completion Status", ["All", "Completed", "Not Completed"], index=0)
 
-# Handle missing dates safely
+# Safe min/max dates for Streamlit date picker
 if df["View_DateOnly"].notna().any():
-    min_date = pd.to_datetime(df["View_DateOnly"]).min().date()
-    max_date = pd.to_datetime(df["View_DateOnly"]).max().date()
+    min_date = min(df["View_DateOnly"])
+    max_date = max(df["View_DateOnly"])
 else:
     min_date, max_date = pd.to_datetime("2024-01-01").date(), pd.to_datetime("2024-12-31").date()
 
@@ -106,6 +106,7 @@ date_range = st.sidebar.date_input("📅 Select Date Range", [min_date, max_date
 
 filtered_df = df.copy()
 
+# Apply filters
 if video_filter:
     filtered_df = filtered_df[filtered_df["Video_Name"].isin(video_filter)]
 
@@ -114,15 +115,14 @@ if completion_filter == "Completed":
 elif completion_filter == "Not Completed":
     filtered_df = filtered_df[filtered_df["Done_Viewing"] == False]
 
-# ✅ Fix for one vs multiple date selections
+# ✅ Fix: Handle both single-date and multi-date input safely
 if isinstance(date_range, list) and len(date_range) == 2:
     start, end = date_range
 elif isinstance(date_range, list) and len(date_range) == 1:
     start = end = date_range[0]
 else:
-    start = end = min_date
+    start, end = min_date, max_date
 
-filtered_df["View_DateOnly"] = pd.to_datetime(filtered_df["View_DateOnly"], errors="coerce").dt.date
 filtered_df = filtered_df[
     (filtered_df["View_DateOnly"] >= start) & (filtered_df["View_DateOnly"] <= end)
 ]
@@ -152,7 +152,7 @@ st.markdown("---")
 # CHARTS
 # ------------------------------------------------------------
 
-# 1️⃣ Line Chart
+# 1️⃣ Line Chart: Views Over Time
 if not filtered_df.empty:
     st.subheader("📈 Engagement Trend Over Time")
     trend_df = filtered_df.groupby("View_DateOnly").size().reset_index(name="Total_Views")
@@ -161,7 +161,7 @@ if not filtered_df.empty:
     fig1.update_layout(xaxis_title="Date", yaxis_title="Total Views")
     st.plotly_chart(fig1, use_container_width=True)
 
-# 2️⃣ Bar Chart
+# 2️⃣ Bar Chart: Top 10 Videos
 if "Video_Name" in filtered_df.columns and "Viewing_Duration_Min" in filtered_df.columns:
     st.subheader("🏆 Top 10 Videos by Avg Duration")
     top_videos_df = (
@@ -176,7 +176,7 @@ if "Video_Name" in filtered_df.columns and "Viewing_Duration_Min" in filtered_df
     fig2.update_layout(xaxis_title="Video", yaxis_title="Avg Duration (min)")
     st.plotly_chart(fig2, use_container_width=True)
 
-# 3️⃣ Pie Chart
+# 3️⃣ Pie Chart: Completion Breakdown
 if "Done_Viewing" in filtered_df.columns:
     st.subheader("🥧 Completion Breakdown")
     comp_counts = filtered_df["Done_Viewing"].value_counts(dropna=True)
@@ -189,7 +189,7 @@ if "Done_Viewing" in filtered_df.columns:
                   color="Status", color_discrete_map={"Completed": "green", "Not Completed": "red"})
     st.plotly_chart(fig3, use_container_width=True)
 
-# 4️⃣ Histogram
+# 4️⃣ Histogram: Viewing Duration Distribution
 if "Viewing_Duration_Min" in filtered_df.columns:
     st.subheader("📊 Viewing Duration Distribution")
     fig4 = px.histogram(filtered_df, x="Viewing_Duration_Min", nbins=30,
@@ -199,7 +199,7 @@ if "Viewing_Duration_Min" in filtered_df.columns:
     st.plotly_chart(fig4, use_container_width=True)
 
 # ------------------------------------------------------------
-# DOWNLOAD
+# DOWNLOAD CLEANED DATA
 # ------------------------------------------------------------
 st.download_button(
     "📥 Download Filtered Data (CSV)",
@@ -207,3 +207,4 @@ st.download_button(
     "Freefuse_Cleaned_Filtered.csv",
     "text/csv"
 )
+
