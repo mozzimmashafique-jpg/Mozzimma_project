@@ -16,12 +16,10 @@ st.write("An interactive analysis of ASPIRA students' engagement with FreeFuse v
 @st.cache_data
 def load_data():
     df = pd.read_excel("ASPIRA_Watched_Duration_052825_V2.xlsx")
-    df.columns = df.columns.str.strip()  # remove extra spaces
+    df.columns = df.columns.str.strip()
 
-    # Display all detected column names for debugging
     st.write("🧾 **Columns detected in dataset:**", list(df.columns))
 
-    # Try renaming common variations automatically
     rename_map = {
         "Video Name": "Video_Name",
         "Video": "Video_Name",
@@ -38,7 +36,6 @@ def load_data():
     }
     df.rename(columns=rename_map, inplace=True)
 
-    # Basic cleanup
     for col in ["Video_Name", "Duration_Watched"]:
         if col in df.columns:
             df = df[df[col].notna()]
@@ -48,11 +45,9 @@ def load_data():
     if "Completion_%" in df.columns:
         df["Completion_%"] = df["Completion_%"].clip(0, 100)
 
-    # Normalize organization names
     if "Organization" in df.columns:
         df["Organization"] = df["Organization"].astype(str).str.upper().str.strip()
 
-    # Derived column
     if "Total_Duration" in df.columns:
         df["Watch_Ratio"] = df["Duration_Watched"] / df["Total_Duration"]
 
@@ -136,4 +131,31 @@ if "Date_Watched" in filtered_df.columns and "Completion_%" in filtered_df.colum
 # 2️⃣ Top Videos by Completion %
 if "Video_Name" in filtered_df.columns and "Completion_%" in filtered_df.columns:
     st.subheader("🏆 Top Videos by Completion Rate")
-    top_videos_df =
+    top_videos_df = (
+        filtered_df.groupby("Video_Name", as_index=False)["Completion_%"].mean().nlargest(10, "Completion_%")
+    )
+    fig2 = px.bar(top_videos_df, x="Video_Name", y="Completion_%", title="Top 10 Videos by Completion %")
+    st.plotly_chart(fig2, use_container_width=True)
+
+# 3️⃣ Watch Time by Organization
+if "Organization" in filtered_df.columns and "Duration_Watched" in filtered_df.columns:
+    st.subheader("🌍 Watch Time Share by Organization")
+    fig3 = px.pie(filtered_df, names="Organization", values="Duration_Watched",
+                  title="Share of Total Watch Time by Organization", hole=0.4)
+    st.plotly_chart(fig3, use_container_width=True)
+
+# 4️⃣ Completion Rate Distribution
+if "Completion_%" in filtered_df.columns:
+    st.subheader("📊 Completion Rate Distribution")
+    fig4 = px.histogram(filtered_df, x="Completion_%", nbins=20, title="Distribution of Completion Rates")
+    st.plotly_chart(fig4, use_container_width=True)
+
+# ------------------------------------------------------------
+# DOWNLOAD CLEANED DATA
+# ------------------------------------------------------------
+st.download_button(
+    "📥 Download Cleaned Data",
+    filtered_df.to_csv(index=False).encode("utf-8"),
+    "cleaned_freefuse_data.csv",
+    "text/csv",
+)
