@@ -7,13 +7,17 @@ import plotly.express as px
 # ------------------------------------------------------------
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", layout="wide")
 
-# Style the app
+# Custom styles
 st.markdown("""
     <style>
         [data-testid="stSidebar"] {
             background-color: #f4f1fb;
         }
         h1, h2, h3 {
+            color: #3b0764;
+        }
+        .stMetric label {
+            font-weight: bold;
             color: #3b0764;
         }
     </style>
@@ -30,6 +34,18 @@ def load_and_clean(path: str) -> pd.DataFrame:
     df = pd.read_excel(path)
     df.columns = df.columns.str.strip()
 
+    # Keep proper video names (don’t delete accented or punctuation characters)
+    if "viewerChoices_VideoName" in df.columns:
+        df["viewerChoices_VideoName"] = df["viewerChoices_VideoName"].astype(str).str.strip()
+
+        # Keep only rows with meaningful video names (not blanks or symbol-only)
+        df = df[
+            df["viewerChoices_VideoName"].notna() &
+            (df["viewerChoices_VideoName"].str.len() > 1) &
+            (~df["viewerChoices_VideoName"].str.match(r'^[^A-Za-z0-9]+$', na=False))
+        ]
+
+    # Rename columns
     rename_map = {
         "viewerChoices_VideoName": "Video_Name",
         "viewerChoices_ViewingDuration": "Viewing_Duration_Sec",
@@ -41,16 +57,7 @@ def load_and_clean(path: str) -> pd.DataFrame:
     }
     df.rename(columns=rename_map, inplace=True)
 
-    # Clean invalid video names
-    if "Video_Name" in df.columns:
-        df["Video_Name"] = df["Video_Name"].astype(str).str.strip()
-        df = df[
-            df["Video_Name"].notna()
-            & (df["Video_Name"].str.len() > 1)
-            & (~df["Video_Name"].str.contains(r"[^a-zA-Z0-9\s\-:,.!?]", na=False))
-        ]
-
-    # Combine date + time and convert to proper datetime
+    # Combine date and time columns, ensure valid datetime
     if "View_Date" in df.columns:
         if "View_Time" in df.columns:
             df["View_Timestamp"] = pd.to_datetime(
@@ -62,20 +69,17 @@ def load_and_clean(path: str) -> pd.DataFrame:
     else:
         df["View_Timestamp"] = pd.NaT
 
-    # Create a proper datetime.date column for filtering
+    # Create clean date-only column
     df["View_DateOnly"] = pd.to_datetime(df["View_Timestamp"], errors="coerce").dt.date
-
-    # Ensure that View_DateOnly is actually a datetime.date (not string)
     df = df[df["View_DateOnly"].notna()]
-    df["View_DateOnly"] = pd.to_datetime(df["View_DateOnly"], errors="coerce").dt.date
 
-    # Duration conversion
+    # Convert duration to minutes
     if "Viewing_Duration_Sec" in df.columns:
         df["Viewing_Duration_Sec"] = pd.to_numeric(df["Viewing_Duration_Sec"], errors="coerce")
         df["Viewing_Duration_Min"] = df["Viewing_Duration_Sec"] / 60
         df = df[df["Viewing_Duration_Min"] > 0]
 
-    # Clean Done_Viewing
+    # Normalize Done_Viewing values
     if "Done_Viewing" in df.columns:
         df["Done_Viewing"] = df["Done_Viewing"].astype(str).str.lower().map({
             "yes": True, "true": True, "1": True, "y": True,
@@ -85,6 +89,8 @@ def load_and_clean(path: str) -> pd.DataFrame:
     df.drop_duplicates(inplace=True)
     return df
 
+
+# Load data
 df = load_and_clean("Freefuse_Data.xlsx")
 
 # ------------------------------------------------------------
@@ -95,7 +101,6 @@ st.sidebar.header("🔎 Filters")
 video_filter = st.sidebar.multiselect("🎬 Select Video", sorted(df["Video_Name"].unique()))
 completion_filter = st.sidebar.radio("✅ Completion Status", ["All", "Completed", "Not Completed"], index=0)
 
-# Safe min/max dates for Streamlit date picker
 if df["View_DateOnly"].notna().any():
     min_date = min(df["View_DateOnly"])
     max_date = max(df["View_DateOnly"])
@@ -104,9 +109,9 @@ else:
 
 date_range = st.sidebar.date_input("📅 Select Date Range", [min_date, max_date])
 
+# Filter the data
 filtered_df = df.copy()
 
-# Apply filters
 if video_filter:
     filtered_df = filtered_df[filtered_df["Video_Name"].isin(video_filter)]
 
@@ -115,7 +120,7 @@ if completion_filter == "Completed":
 elif completion_filter == "Not Completed":
     filtered_df = filtered_df[filtered_df["Done_Viewing"] == False]
 
-# ✅ Fix: Handle both single-date and multi-date input safely
+# Handle single vs multiple date inputs safely
 if isinstance(date_range, list) and len(date_range) == 2:
     start, end = date_range
 elif isinstance(date_range, list) and len(date_range) == 1:
@@ -199,7 +204,7 @@ if "Viewing_Duration_Min" in filtered_df.columns:
     st.plotly_chart(fig4, use_container_width=True)
 
 # ------------------------------------------------------------
-# DOWNLOAD CLEANED DATA
+# DOWNLOAD FILTERED DATA
 # ------------------------------------------------------------
 st.download_button(
     "📥 Download Filtered Data (CSV)",
@@ -207,5 +212,3 @@ st.download_button(
     "Freefuse_Cleaned_Filtered.csv",
     "text/csv"
 )
-
-
