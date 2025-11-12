@@ -59,7 +59,6 @@ def load_and_clean(path: str):
     c_date  = pick_col(raw, ["viewerChoices_ViewDate","View_Date","ViewDate","Date"])
     c_time  = pick_col(raw, ["viewerChoices_ViewTime","View_Time","ViewTime","Time"])
     c_viewr = pick_col(raw, ["videoViewer","Viewer","User","Student"])
-    c_own   = pick_col(raw, ["videoOwner","Owner","Instructor"])
     c_qid   = pick_col(raw, ["questionnaireId","QuestionnaireId"])
 
     df = pd.DataFrame(index=raw.index)
@@ -93,18 +92,16 @@ def load_and_clean(path: str):
     else:
         df["Done_Viewing"] = pd.NA
 
-    # viewer/owner + questionnaire
+    # viewer + questionnaire
     df["Viewer"] = raw[c_viewr] if c_viewr else pd.NA
-    df["Owner"]  = raw[c_own]   if c_own   else pd.NA
     df["questionnaireId"] = raw[c_qid] if c_qid else pd.NA
     df["Has_Questionnaire"] = df["questionnaireId"].notna() & (df["questionnaireId"].astype(str).str.len() > 0)
 
     # clean rows
     df = df.dropna(subset=["Video_Name","View_Date"]).copy()
     df = df[pd.to_numeric(df["Viewing_Duration_Min"], errors="coerce") > 0]
-    df = df[df["Done_Viewing"].notna()]   # drop blanks in completion
+    df = df[df["Done_Viewing"].notna()]
     df.drop_duplicates(inplace=True)
-
     return df
 
 DATAFILE = "ASPIRA_Watched_Duration_052825_V2.xlsx"
@@ -153,7 +150,7 @@ if f.empty:
 st.subheader("📊 Key Engagement Metrics")
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("🎬 Total Views", f"{len(f):,}")
-c2.metric("👥 Unique Viewers", f[f["Viewer"].notna()]["Viewer"].nunique())
+c2.metric("👥 Unique Viewers", f[f['Viewer'].notna()]['Viewer'].nunique())
 c3.metric("⏱️ Avg Duration (min)", f"{pd.to_numeric(f['Viewing_Duration_Min']).mean():.2f}")
 c4.metric("✅ Completion Rate", f"{(f['Done_Viewing'].mean()*100):.1f}%")
 st.markdown("---")
@@ -177,69 +174,37 @@ if not hourly.empty:
     fig3 = px.line(hourly, x="Hour", y="Views", markers=True, title="Hourly Viewership (selected range)")
     st.plotly_chart(fig3, use_container_width=True)
 
-# 4️⃣ Top 10 videos by avg duration
-top_dur = (f.groupby("Video_Name", as_index=False)["Viewing_Duration_Min"]
-             .mean().sort_values("Viewing_Duration_Min", ascending=False).head(10))
-if not top_dur.empty:
-    fig4 = px.bar(top_dur, x="Video_Name", y="Viewing_Duration_Min", color="Viewing_Duration_Min",
-                  color_continuous_scale="Purples", title="Top 10 Videos by Average Duration (Minutes)")
-    st.plotly_chart(fig4, use_container_width=True)
-
-# 5️⃣ Top 10 videos by completion rate + total views
+# 4️⃣ Top 5 videos by completion rate + total views
 comp = (
     f.groupby("Video_Name")
      .agg(Completion_Rate=("Done_Viewing","mean"),
           Total_Views=("Done_Viewing","count"))
      .reset_index()
      .sort_values("Completion_Rate", ascending=False)
-     .head(10)
+     .head(5)
 )
 if not comp.empty:
-    fig5 = px.bar(
+    fig4 = px.bar(
         comp, x="Video_Name", y="Completion_Rate",
         color="Completion_Rate", color_continuous_scale="Greens",
-        title="Top 10 Videos by Completion Rate (+ Total Views Shown)",
+        title="Top 5 Videos by Completion Rate (+ Total Views Shown)",
         text="Total_Views"
     )
-    fig5.update_traces(texttemplate="%{text} views", textposition="outside")
+    fig4.update_traces(texttemplate="%{text} views", textposition="outside")
+    st.plotly_chart(fig4, use_container_width=True)
+
+# 5️⃣ Questionnaire participation by viewers
+q_viewers = f.groupby("Viewer")["Has_Questionnaire"].any().reset_index()
+q_viewers["Status"] = q_viewers["Has_Questionnaire"].map({True: "Filled Questionnaire", False: "Did Not Fill"})
+count_df = q_viewers["Status"].value_counts().reset_index()
+count_df.columns = ["Status", "Viewer_Count"]
+
+if not count_df.empty:
+    fig5 = px.bar(count_df, x="Status", y="Viewer_Count",
+                  color="Status", title="Viewers Who Filled Out Questionnaire vs Those Who Did Not",
+                  text="Viewer_Count")
+    fig5.update_traces(texttemplate="%{text}", textposition="outside")
     st.plotly_chart(fig5, use_container_width=True)
-
-# 6️⃣ Viewing duration distribution
-fig6 = px.histogram(f, x="Viewing_Duration_Min", nbins=30, title="Distribution of Viewing Duration (Minutes)")
-st.plotly_chart(fig6, use_container_width=True)
-
-# 7️⃣ Owner vs viewer comparison
-f["IsOwner"] = f["Viewer"] == f["Owner"]
-grp1 = f.groupby("IsOwner")["Viewing_Duration_Min"].mean().reset_index()
-grp1["Group"] = grp1["IsOwner"].map({True:"Owner", False:"Viewer"})
-if not grp1.empty:
-    fig7 = px.bar(grp1, x="Group", y="Viewing_Duration_Min", color="Group", title="Avg Viewing Duration: Owner vs Viewer")
-    st.plotly_chart(fig7, use_container_width=True)
-
-# 8️⃣ Repeat viewers
-rep = f.groupby(["Viewer","Video_Name"]).size().reset_index(name="Count")
-multi = rep[rep["Count"] > 1]
-rep_ct = multi["Video_Name"].value_counts().head(10)
-if not rep_ct.empty:
-    fig8 = px.bar(x=rep_ct.index, y=rep_ct.values, title="Top 10 Videos by Repeat Viewers",
-                  labels={"x":"Video","y":"Repeat Viewers"})
-    st.plotly_chart(fig8, use_container_width=True)
-
-# 9️⃣ Questionnaire analysis (new)
-# a) Views vs questionnaire presence
-qv = f.groupby(f["Has_Questionnaire"].map({True:"Has questionnaire", False:"No questionnaire"})).size().reset_index(name="Views")
-if not qv.empty:
-    fig9 = px.bar(qv, x="Has_Questionnaire", y="Views", title="Views vs Questionnaire Presence")
-    st.plotly_chart(fig9, use_container_width=True)
-
-# b) Viewer participation in questionnaires
-if "questionnaireId" in f.columns and "Viewer" in f.columns:
-    q_counts = f.dropna(subset=["questionnaireId"]).groupby("questionnaireId")["Viewer"].nunique().reset_index(name="Unique_Viewers")
-    if not q_counts.empty:
-        fig10 = px.bar(q_counts, x="questionnaireId", y="Unique_Viewers",
-                       title="Unique Viewers Who Filled Out Each Questionnaire",
-                       color="Unique_Viewers", color_continuous_scale="Blues")
-        st.plotly_chart(fig10, use_container_width=True)
 
 # -------------------- DOWNLOAD --------------------
 st.download_button(
