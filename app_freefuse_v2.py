@@ -1,7 +1,11 @@
+# Retry writing the file (the previous kernel state reset).
 
+from pathlib import Path
+
+code_path = "/mnt/data/app_freefuse_final.py"
+open(code_path, "w", encoding="utf-8").write("""
 import math
-import re
-from typing import Dict, List, Optional
+from typing import Optional, List
 
 import numpy as np
 import pandas as pd
@@ -9,485 +13,325 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# ========================================
-# Page config & styles
-# ========================================
-st.set_page_config(page_title="FreeFuse Engagement Dashboard (v2)", page_icon="📊", layout="wide")
-st.markdown(
-    """
-    <style>
-      [data-testid="stSidebar"] { background-color:#f4f1fb; }
-      h1,h2,h3{ color:#3b0764; }
-      .stMetric label{ font-weight:600; color:#3b0764; }
-      .muted { color:#5b5b5b; font-size:0.9rem; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-st.title("📊 FreeFuse Interactive Engagement Dashboard — v2")
-st.caption("Unified from Watch History, Video Counts, and Parent/Child Durations datasets.")
+st.set_page_config(page_title="FreeFuse Engagement Dashboard", page_icon="🎬", layout="wide")
+st.markdown(\"\"\"
+<style>
+  :root { --accent:#6A5ACD; --accent2:#9370DB; --bg:#f7f5ff; }
+  [data-testid="stSidebar"] { background-color: var(--bg); }
+  h1,h2,h3 { color:#2b1b6b; }
+  .card { padding:1rem; background:white; border-radius:16px; box-shadow:0 2px 10px rgba(0,0,0,0.05); }
+  .kpi { display:flex; flex-direction:column; gap:0.25rem; }
+  .kpi .label { color:#4b4b4b; font-size:0.85rem; }
+  .kpi .value { font-size:1.6rem; font-weight:700; color:#2b1b6b; }
+</style>
+\"\"\", unsafe_allow_html=True)
 
-# ========================================
-# Helpers
-# ========================================
-def norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(s).strip().lower())
+st.title(\"🎥 FreeFuse Interactive Engagement Dashboard\")
 
-def pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    """Fuzzy-pick a column name by exact, normalized, then 'contains' match."""
-    if df is None or df.empty:
-        return None
-    cols = list(df.columns)
-    # exact
-    for c in candidates:
-        if c in cols:
-            return c
-    target_norms = [norm(c) for c in candidates]
-    name_by_norm = {norm(c): c for c in cols}
-    for t in target_norms:
-        if t in name_by_norm:
-            return name_by_norm[t]
-    for c in cols:
-        nc = norm(c)
-        if any(t in nc for t in target_norms):
-            return c
-    return None
-
-def clean_title_series(s: pd.Series) -> pd.Series:
-    s = s.astype(str).str.strip()
-    keep = s.str.replace(r"[^0-9A-Za-z]+", "", regex=True).str.len() > 0
-    return s.where(keep)
-
-def to_minutes(x):
-    try:
-        v = pd.to_numeric(x, errors="coerce")
-        return v / 60.0
-    except Exception:
-        return np.nan
-
-def pct(n):
-    return None if pd.isna(n) else f"{n*100:.1f}%"
-
-# ========================================
-# Sidebar: data ingestion
-# ========================================
-st.sidebar.header("1) Load datasets")
-
-st.sidebar.caption("Upload the three Excel files. If left empty, the app will try reading preloaded files by name.")
-
-file_watch = st.sidebar.file_uploader("Watch History (2022–2024)", type=["xlsx"], key="watch")
-file_counts = st.sidebar.file_uploader("Video Counts (2022–2024)", type=["xlsx"], key="counts")
-file_parent = st.sidebar.file_uploader("Watched_Durations_Parent_And_ChildVideos", type=["xlsx"], key="parent")
-
-# Fallback to pre-mounted files if present
-fallback_watch = "Main Nodes Watch History 2022-2024 School Year.xlsx"
-fallback_counts = "Video Counts 2022-2024.xlsx"
-fallback_parent = "Watched_Durations_Parent_And_ChildVideos.xlsx"
+WATCH_HISTORY_FILE = \"Main Nodes Watch History 2022-2024 School Year.xlsx\"
+VIDEO_COUNTS_FILE  = \"Video Counts 2022-2024.xlsx\"
+PARENT_CHILD_FILE  = \"Watched_Durations_Parent_And_ChildVideos.xlsx\"
 
 @st.cache_data(show_spinner=False)
-def read_excel_flex(upload, fallback_name: str):
-    if upload is not None:
-        return pd.read_excel(upload)
+def read_xlsx(path: str, sheet_name: Optional[str]=None) -> pd.DataFrame:
+    return pd.read_excel(path, sheet_name=sheet_name)
+
+def normalize_minutes(series: pd.Series) -> pd.Series:
+    s = pd.to_numeric(series, errors=\"coerce\")
+    if s.dropna().median() > 200:
+        s = s / 60.0
+    return s
+
+def ensure_datetime(date_col: pd.Series, time_col: Optional[pd.Series]=None) -> pd.Series:
+    if time_col is not None:
+        ts = pd.to_datetime(date_col.astype(str) + \" \" + time_col.astype(str), errors=\"coerce\")
+    else:
+        ts = pd.to_datetime(date_col, errors=\"coerce\")
+    return ts
+
+def am_pm_from_hour(h: int) -> str:
     try:
-        return pd.read_excel(fallback_name)
+        h = int(h)
     except Exception:
-        return None
+        return \"Unknown\"
+    return \"AM\" if 0 <= h < 12 else \"PM\"
 
-watch_df = read_excel_flex(file_watch, fallback_watch)
-counts_df = read_excel_flex(file_counts, fallback_counts)
-parent_df = read_excel_flex(file_parent, fallback_parent)
+def fmt_int(n):
+    try:
+        return f\"{int(n):,}\"
+    except Exception:
+        return \"—\"
 
-if watch_df is None:
-    st.error("Please upload the **Watch History** file (or ensure it exists on disk).")
+try:
+    watch_raw = read_xlsx(WATCH_HISTORY_FILE)
+    counts_raw = read_xlsx(VIDEO_COUNTS_FILE)
+    pc_raw = read_xlsx(PARENT_CHILD_FILE)
+except Exception as e:
+    st.error(f\"Failed to load one or more files: {e}\")
     st.stop()
 
-# ========================================
-# Column mapping
-# ========================================
-st.sidebar.header("2) Map columns")
+watch_cols = {c.lower().strip(): c for c in watch_raw.columns}
+counts_cols = {c.lower().strip(): c for c in counts_raw.columns}
+pc_cols = {c.lower().strip(): c for c in pc_raw.columns}
 
-def map_columns_ui(df, title, spec: Dict[str, List[str]]):
-    st.sidebar.subheader(title)
-    mapping = {}
-    for key, cands in spec.items():
-        options = ["—"] + list(df.columns)
-        default = 0
-        # preselect best guess
-        guess = pick_col(df, cands)
-        if guess and guess in df.columns:
-            default = options.index(guess) if guess in options else 0
-        mapping[key] = st.sidebar.selectbox(f"{key}", options, index=default, key=f"{title}-{key}")
-    return {k: (None if v == "—" else v) for k, v in mapping.items()}
+def get_col(mapping, *names):
+    for n in names:
+        key = n.lower()
+        if key in mapping:
+            return mapping[key]
+    return None
 
-# Watch history mapping
-watch_spec = {
-    "video_name": ["viewerChoices_VideoName","Video_Name","VideoName","video name","viewerChoices video name"],
-    "viewer_id":  ["videoViewer","Viewer","User","Student","viewer id"],
-    "owner_id":   ["videoOwner","Owner","Instructor"],
-    "date":       ["viewerChoices_ViewDate","View_Date","ViewDate","Date"],
-    "time":       ["viewerChoices_ViewTime","View_Time","ViewTime","Time"],
-    "duration_s": ["viewerChoices_ViewingDuration","Viewing_Duration_Sec","ViewingDuration","Duration","Duration_Seconds"],
-    "done":       ["viewerChoices_DoneViewing","Done_Viewing","Done","Completed","Completion"],
-    "video_id":   ["viewerChoices_VideoId","VideoID","Video_Id","video id","id"],
-}
-watch_map = map_columns_ui(watch_df, "Watch History columns", watch_spec)
+w_video_id = get_col(watch_cols, \"video_id\")
+w_title    = get_col(watch_cols, \"video_name\", \"title\", \"name\")
+w_date     = get_col(watch_cols, \"date\", \"view_date\", \"viewerchoices_viewdate\")
+w_time     = get_col(watch_cols, \"time\", \"view_time\", \"viewerchoices_viewtime\")
+w_duration = get_col(watch_cols, \"duration\", \"viewing_duration_min\", \"viewing_duration\", \"viewerchoices_viewingduration\")
+w_viewer   = get_col(watch_cols, \"viewer\", \"videoviewer\", \"user_id\", \"viewer_id\")
+w_owner    = get_col(watch_cols, \"owner\", \"videoowner\", \"owner_id\")
+w_done     = get_col(watch_cols, \"done\", \"completed\", \"done_viewing\", \"viewerchoices_doneviewing\")
+w_category = get_col(watch_cols, \"category\", \"module\", \"topic\", \"tag\")
 
-# Video counts mapping
-counts_spec = {
-    "video_id":   ["VideoID","Video_Id","viewerChoices_VideoId","id","video id"],
-    "video_name": ["Video_Name","VideoName","viewerChoices_VideoName","name","title"],
-    "view_count": ["Count","Views","View_Count","Total_Views","n"],
-}
-if counts_df is not None:
-    counts_map = map_columns_ui(counts_df, "Video Counts columns", counts_spec)
+watch = pd.DataFrame()
+watch[\"video_id\"] = watch_raw[w_video_id] if w_video_id else pd.NA
+watch[\"video_name\"] = watch_raw[w_title] if w_title else pd.NA
+watch[\"ts\"] = ensure_datetime(watch_raw[w_date], watch_raw[w_time]) if w_date else pd.to_datetime(pd.NaT)
+watch[\"date\"] = pd.to_datetime(watch[\"ts\"], errors=\"coerce\").dt.date
+watch[\"hour\"] = pd.to_datetime(watch[\"ts\"], errors=\"coerce\").dt.hour
+watch[\"dow\"] = pd.to_datetime(watch[\"ts\"], errors=\"coerce\").dt.day_name
+watch[\"duration_min\"] = normalize_minutes(watch_raw[w_duration]) if w_duration else np.nan
+watch[\"viewer_id\"] = watch_raw[w_viewer] if w_viewer else pd.NA
+watch[\"owner_id\"] = watch_raw[w_owner] if w_owner else pd.NA
+if w_done:
+    done_norm = watch_raw[w_done].astype(str).str.strip().str.lower().map(
+        {\"yes\":True,\"true\":True,\"1\":True,\"y\":True,\"completed\":True,
+         \"no\":False,\"false\":False,\"0\":False,\"n\":False,\"not completed\":False}
+    )
+    watch[\"done\"] = done_norm
 else:
-    counts_map = {}
+    watch[\"done\"] = np.nan
+watch[\"category\"] = watch_raw[w_category] if w_category else pd.NA
+watch = watch.dropna(subset=[\"date\"]).copy()
 
-# Parent/Child mapping
-parent_spec = {
-    "parent_or_child": ["Type","Level","ParentChild","parent_child","is_parent","Parent/Child"],
-    "video_id":        ["VideoID","Video_Id","viewerChoices_VideoId","id","video id"],
-    "video_name":      ["Video_Name","VideoName","viewerChoices_VideoName","name","title"],
-    "category":        ["Category","Topic","Module","Tag","Tags"],
-    "date":            ["ViewDate","Date","viewerChoices_ViewDate"],
-    "time":            ["ViewTime","Time","viewerChoices_ViewTime"],
-    "duration_s":      ["ViewingDuration","Duration_Sec","Duration","viewerChoices_ViewingDuration"],
-    "viewer_id":       ["Viewer","User","Student","videoViewer"],
-}
-if parent_df is not None:
-    parent_map = map_columns_ui(parent_df, "Parent/Child columns", parent_spec)
+c_video_id = get_col(counts_cols, \"video_id\")
+c_title    = get_col(counts_cols, \"video_name\", \"title\", \"name\")
+c_views    = get_col(counts_cols, \"view_count\", \"views\", \"count\", \"total_views\")
+counts = pd.DataFrame()
+counts[\"video_id\"] = counts_raw[c_video_id] if c_video_id else pd.NA
+counts[\"video_name\"] = counts_raw[c_title] if c_title else pd.NA
+counts[\"view_count\"] = pd.to_numeric(counts_raw[c_views], errors=\"coerce\") if c_views else np.nan
+
+p_video_id = get_col(pc_cols, \"video_id\")
+p_title    = get_col(pc_cols, \"video_name\", \"title\", \"name\")
+p_type     = get_col(pc_cols, \"parent_or_child\", \"type\", \"level\", \"parentchild\")
+p_duration = get_col(pc_cols, \"duration\", \"viewing_duration_min\", \"viewing_duration\")
+p_category = get_col(pc_cols, \"category\", \"module\", \"topic\", \"tag\")
+p_date     = get_col(pc_cols, \"date\", \"view_date\")
+p_time     = get_col(pc_cols, \"time\", \"view_time\")
+
+pc = pd.DataFrame()
+pc[\"video_id\"] = pc_raw[p_video_id] if p_video_id else pd.NA
+pc[\"video_name\"] = pc_raw[p_title] if p_title else pd.NA
+pc[\"parent_or_child\"] = pc_raw[p_type] if p_type else pd.NA
+pc[\"duration_min\"] = normalize_minutes(pc_raw[p_duration]) if p_duration else np.nan
+pc[\"category\"] = pc_raw[p_category] if p_category else pd.NA
+pc[\"ts\"] = ensure_datetime(pc_raw[p_date], pc_raw[p_time]) if p_date else pd.to_datetime(pd.NaT)
+pc[\"date\"] = pd.to_datetime(pc[\"ts\"], errors=\"coerce\").dt.date
+
+merge_key = \"video_id\" if watch[\"video_id\"].notna().any() and counts[\"video_id\"].notna().any() else \"video_name\"
+if counts.dropna(subset=[merge_key]).empty:
+    watch[\"view_count\"] = np.nan
 else:
-    parent_map = {}
+    watch = watch.merge(counts[[merge_key, \"view_count\"]].dropna(), on=merge_key, how=\"left\")
 
-# ========================================
-# Standardize frames
-# ========================================
-def standardize_watch(df, m):
-    w = pd.DataFrame(index=df.index)
-    w["video_name"] = clean_title_series(df[m["video_name"]]) if m.get("video_name") else pd.NA
-    if m.get("date") and m.get("time"):
-        ts = pd.to_datetime(df[m["date"]].astype(str) + " " + df[m["time"]].astype(str), errors="coerce")
-    elif m.get("date"):
-        ts = pd.to_datetime(df[m["date"]], errors="coerce")
-    else:
-        ts = pd.NaT
-    w["ts"] = ts
-    w["date"] = pd.to_datetime(w["ts"], errors="coerce").dt.date
-    w["hour"] = pd.to_datetime(w["ts"], errors="coerce").dt.hour
-    w["dow"] = pd.to_datetime(w["ts"], errors="coerce").dt.day_name()
-    w["viewer_id"] = df[m["viewer_id"]] if m.get("viewer_id") else pd.NA
-    w["owner_id"] = df[m["owner_id"]] if m.get("owner_id") else pd.NA
-    w["video_id"] = df[m["video_id"]] if m.get("video_id") else pd.NA
-    w["duration_min"] = to_minutes(df[m["duration_s"]]) if m.get("duration_s") else np.nan
-    if m.get("done"):
-        done = df[m["done"]].astype(str).str.strip().str.lower().map(
-            {"yes":True,"true":True,"1":True,"y":True,"completed":True,
-             "no":False,"false":False,"0":False,"n":False,"not completed":False}
-        )
-        w["done"] = done
-    else:
-        w["done"] = np.nan
-    w = w.dropna(subset=["video_name","date"])
-    w = w[pd.to_numeric(w["duration_min"], errors="coerce") > 0]
-    return w.copy()
+if not pc.dropna(subset=[merge_key]).empty:
+    meta_cols = [c for c in [\"parent_or_child\",\"category\"] if c in pc.columns]
+    watch = watch.merge(pc[[merge_key]+meta_cols].drop_duplicates(), on=merge_key, how=\"left\")
 
-def standardize_counts(df, m):
-    if df is None or not m:
-        return None
-    c = pd.DataFrame(index=df.index)
-    c["video_id"]   = df[m["video_id"]] if m.get("video_id") else pd.NA
-    c["video_name"] = clean_title_series(df[m["video_name"]]) if m.get("video_name") else pd.NA
-    c["view_count"] = pd.to_numeric(df[m["view_count"]], errors="coerce") if m.get("view_count") else np.nan
-    c = c.dropna(subset=["video_name"])
-    return c.copy()
+watch[\"month\"] = pd.to_datetime(watch[\"date\"], errors=\"coerce\").to_period(\"M\").dt.to_timestamp()
+watch[\"am_pm\"] = watch[\"hour\"].apply(am_pm_from_hour)
+watch[\"is_owner_view\"] = watch[\"viewer_id\"].astype(str) == watch[\"owner_id\"].astype(str)
 
-def standardize_parent(df, m):
-    if df is None or not m:
-        return None
-    p = pd.DataFrame(index=df.index)
-    p["video_id"]   = df[m["video_id"]] if m.get("video_id") else pd.NA
-    p["video_name"] = clean_title_series(df[m["video_name"]]) if m.get("video_name") else pd.NA
-    p["parent_or_child"] = df[m["parent_or_child"]] if m.get("parent_or_child") else pd.NA
-    p["category"]   = df[m["category"]] if m.get("category") else pd.NA
-    # optional ts
-    if m.get("date") and m.get("time"):
-        ts = pd.to_datetime(df[m["date"]].astype(str) + " " + df[m["time"]].astype(str), errors="coerce")
-    elif m.get("date"):
-        ts = pd.to_datetime(df[m["date"]], errors="coerce")
-    else:
-        ts = pd.NaT
-    p["ts"] = ts
-    p["duration_min"] = to_minutes(df[m["duration_s"]]) if m.get("duration_s") else np.nan
-    p["viewer_id"] = df[m["viewer_id"]] if m.get("viewer_id") else pd.NA
-    p = p.dropna(subset=["video_name"])
-    return p.copy()
+rep_key = \"video_id\" if watch[\"video_id\"].notna().any() else \"video_name\"
+rep = watch.groupby([\"viewer_id\", rep_key]).size().rename(\"plays_user_video\").reset_index()
+watch = watch.merge(rep, on=[\"viewer_id\", rep_key], how=\"left\")
 
-watch = standardize_watch(watch_df, watch_map)
-counts = standardize_counts(counts_df, counts_map)
-parent = standardize_parent(parent_df, parent_map)
-
-# Merge counts (by name preferred, fallback to id)
-if counts is not None and not counts.empty:
-    key = "video_name" if "video_name" in counts.columns and counts["video_name"].notna().any() else "video_id"
-    watch = watch.merge(counts[[key, "view_count"]], on=key, how="left")
-
-# Merge parent/child meta
-if parent is not None and not parent.empty:
-    join_cols = ["video_name","video_id"]
-    use_cols = [c for c in join_cols if c in parent.columns]
-    meta_cols = [c for c in ["parent_or_child","category"] if c in parent.columns]
-    watch = watch.merge(parent[use_cols + meta_cols].drop_duplicates(), on=use_cols, how="left")
-
-# Derived fields
-watch["month"] = pd.to_datetime(watch["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
-watch["is_owner_view"] = watch["viewer_id"].astype(str) == watch["owner_id"].astype(str)
-# repeat plays: per viewer per video
-repeat = watch.groupby(["viewer_id","video_name"]).size().rename("plays_user_video").reset_index()
-watch = watch.merge(repeat, on=["viewer_id","video_name"], how="left")
-
-# ========================================
-# Sidebar: filters
-# ========================================
-st.sidebar.header("3) Filters")
-
-# date
-if watch["date"].notna().any():
-    dmin = pd.to_datetime(watch["date"]).min().date()
-    dmax = pd.to_datetime(watch["date"]).max().date()
+st.sidebar.header(\"Filters\")
+if watch[\"date\"].notna().any():
+    dmin = pd.to_datetime(watch[\"date\"]).min().date()
+    dmax = pd.to_datetime(watch[\"date\"]).max().date()
 else:
-    dmin = dmax = pd.to_datetime("today").date()
+    dmin = dmax = pd.to_datetime(\"today\").date()
+date_range = st.sidebar.date_input(\"Date range\", (dmin, dmax))
+start_date, end_date = date_range if isinstance(date_range, tuple) else (dmin, dmax)
 
-date_range = st.sidebar.date_input("Date range", (dmin, dmax))
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start_date, end_date = date_range
-else:
-    start_date, end_date = dmin, dmax
+f = watch[(pd.to_datetime(watch[\"date\"]) >= pd.to_datetime(start_date)) & (pd.to_datetime(watch[\"date\"]) <= pd.to_datetime(end_date))]
 
-f = watch[(pd.to_datetime(watch["date"]) >= pd.to_datetime(start_date)) & (pd.to_datetime(watch["date"]) <= pd.to_datetime(end_date))]
+if \"category\" in f.columns and f[\"category\"].notna().any():
+    cats = [\"All\"] + sorted([c for c in f[\"category\"].dropna().unique().tolist() if str(c).strip()])
+    pick_cat = st.sidebar.selectbox(\"Category / Module\", cats, index=0)
+    if pick_cat != \"All\":
+        f = f[f[\"category\"] == pick_cat]
 
-# category
-if "category" in f.columns and f["category"].notna().any():
-    cats = ["All"] + sorted([c for c in f["category"].dropna().unique().tolist() if str(c).strip()])
-    pick_cat = st.sidebar.selectbox("Category / Module", cats, index=0)
-    if pick_cat != "All":
-        f = f[f["category"] == pick_cat]
+if \"parent_or_child\" in f.columns and f[\"parent_or_child\"].notna().any():
+    poc = [\"All\"] + sorted(f[\"parent_or_child\"].dropna().unique().tolist())
+    pick_poc = st.sidebar.selectbox(\"Parent vs Child\", poc, index=0)
+    if pick_poc != \"All\":
+        f = f[f[\"parent_or_child\"] == pick_poc]
 
-# parent/child
-if "parent_or_child" in f.columns and f["parent_or_child"].notna().any():
-    poc = ["All"] + sorted(f["parent_or_child"].dropna().unique().tolist())
-    pick_poc = st.sidebar.selectbox("Parent vs Child", poc, index=0)
-    if pick_poc != "All":
-        f = f[f["parent_or_child"] == pick_poc]
+pick_ampm = st.sidebar.radio(\"Time of day\", [\"Both\",\"AM\",\"PM\"], index=0, horizontal=True)
+if pick_ampm != \"Both\":
+    f = f[f[\"am_pm\"] == pick_ampm]
 
-# owner vs viewer
-owner_filter = st.sidebar.selectbox("Viewer type", ["All","Owner only","Non-owner only"], index=0)
-if owner_filter == "Owner only":
-    f = f[f["is_owner_view"] == True]
-elif owner_filter == "Non-owner only":
-    f = f[f["is_owner_view"] == False]
+vid_names = sorted([v for v in f[\"video_name\"].dropna().unique().tolist() if str(v).strip()])
+picked_videos = st.sidebar.multiselect(\"Videos\", vid_names, default=[])
+if picked_videos:
+    f = f[f[\"video_name\"].isin(picked_videos)]
 
-# min views threshold for leaderboard
-min_views = st.sidebar.slider("Min views per video (for tables)", 0, 100, 0, 1)
+st.sidebar.write(\"Min views (tables)\")
+min_views = st.sidebar.slider(\"\", 0, 100, 0, 1)
 
-# ========================================
-# KPIs
-# ========================================
-st.subheader("📊 Key Metrics")
-c1,c2,c3,c4,c5 = st.columns(5)
+st.subheader(\"📌 Key Metrics\")
+k1,k2,k3,k4,k5 = st.columns(5)
 
 total_views = len(f)
-unique_viewers = f["viewer_id"].nunique()
-videos_watched = f["video_name"].nunique()
-avg_duration = pd.to_numeric(f["duration_min"], errors="coerce").mean()
-repeat_rate = (f["plays_user_video"] > 1).mean() if "plays_user_video" in f.columns else np.nan
+unique_viewers = f[\"viewer_id\"].nunique()
+videos_watched = f[\"video_name\"].nunique()
+avg_duration = pd.to_numeric(f[\"duration_min\"], errors=\"coerce\").mean()
 
-c1.metric("Total Views", f"{total_views:,}")
-c2.metric("Unique Viewers", f"{unique_viewers:,}")
-c3.metric("Videos Watched", f"{videos_watched:,}")
-c4.metric("Avg Duration (min)", f"{avg_duration:.2f}" if not math.isnan(avg_duration) else "—")
-c5.metric("Repeat View Rate", f"{repeat_rate*100:.1f}%" if not pd.isna(repeat_rate) else "—")
-
-# Peak month
-monthly = f.groupby("month").agg(views=("video_name","count"),
-                                 unique_viewers=("viewer_id","nunique"),
-                                 avg_duration=("duration_min","mean")).reset_index()
+monthly = f.groupby(\"month\").size().rename(\"views\").reset_index()
 if not monthly.empty:
-    peak = monthly.sort_values("views", ascending=False).head(1)
-    st.info(f"📈 Peak engagement month: **{peak['month'].dt.strftime('%b %Y').iloc[0]}** with **{int(peak['views'].iloc[0])}** views")
+    peak = monthly.sort_values(\"views\", ascending=False).head(1)
+    most_month = peak[\"month\"].dt.strftime(\"%b %Y\").iloc[0]
+else:
+    most_month = \"—\"
 
-st.markdown("---")
+st.markdown(f'<div class=\"card kpi\"><div class=\"label\">Total Views</div><div class=\"value\">{fmt_int(total_views)}</div></div>', unsafe_allow_html=True)
+with k2:
+    st.markdown(f'<div class=\"card kpi\"><div class=\"label\">Unique Viewers</div><div class=\"value\">{fmt_int(unique_viewers)}</div></div>', unsafe_allow_html=True)
+with k3:
+    st.markdown(f'<div class=\"card kpi\"><div class=\"label\">Videos Watched</div><div class=\"value\">{fmt_int(videos_watched)}</div></div>', unsafe_allow_html=True)
+with k4:
+    st.markdown(f'<div class=\"card kpi\"><div class=\"label\">Avg Duration (min)</div><div class=\"value\">{(f\"{avg_duration:.2f}\" if not math.isnan(avg_duration) else \"—\")}</div></div>', unsafe_allow_html=True)
+with k5:
+    st.markdown(f'<div class=\"card kpi\"><div class=\"label\">Most Watched Month</div><div class=\"value\">{most_month}</div></div>', unsafe_allow_html=True)
 
-# ========================================
-# Tabs
-# ========================================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Overview",
-    "Video Leaderboard",
-    "Engagement Quality",
-    "Repeat Viewing",
-    "Time Heatmap",
-    "Owner vs Viewer",
+st.markdown(\"---\")
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    \"Overview\",
+    \"Top Videos (Counts)\",
+    \"Completion & Duration\",
+    \"Time Heatmap\",
+    \"Owner vs Viewer\",
 ])
 
-# -------- Overview --------
 with tab1:
-    colA, colB = st.columns([2,1], gap="large")
-
-    with colA:
+    left, right = st.columns([2,1], gap=\"large\")
+    with left:
         if not monthly.empty:
-            fig = px.line(monthly, x="month", y="views", markers=True, title="Monthly Views")
-            fig.update_layout(height=420, xaxis_title="", yaxis_title="Views")
+            fig = px.bar(monthly, x=\"month\", y=\"views\", title=\"Monthly Views\", text_auto=True)
+            fig.update_layout(xaxis_title=\"\", yaxis_title=\"Views\", height=420)
             st.plotly_chart(fig, use_container_width=True)
 
-        daily = f.groupby("date").size().rename("views").reset_index()
+        daily = f.groupby(\"date\").size().rename(\"views\").reset_index()
         if not daily.empty:
-            fig2 = px.area(daily, x="date", y="views", title="Daily Views")
-            fig2.update_layout(height=420, xaxis_title="", yaxis_title="Views")
+            fig2 = px.line(daily, x=\"date\", y=\"views\", markers=True, title=\"Views Over Time\")
+            fig2.update_layout(xaxis_title=\"Date\", yaxis_title=\"Views\", height=420)
             st.plotly_chart(fig2, use_container_width=True)
-
-    with colB:
-        if "duration_min" in f:
-            comp = pd.to_numeric(f["duration_min"], errors="coerce")
-            st.metric("Median Duration (min)", f"{comp.median():.2f}")
-            st.metric("P75 Duration (min)", f"{comp.quantile(0.75):.2f}")
-
-# -------- Leaderboard --------
-with tab2:
-    agg = f.groupby(["video_name","category"] if "category" in f.columns else ["video_name"]).agg(
-        views=("viewer_id","count"),
-        unique_viewers=("viewer_id","nunique"),
-        avg_duration=("duration_min","mean"),
-        repeat_share=("plays_user_video", lambda s: (s>1).mean() if s.notna().any() else np.nan),
-    ).reset_index()
-
-    # attach counts table if present (by video_name)
-    if "view_count" in f.columns and f["view_count"].notna().any():
-        vc = f[["video_name","view_count"]].dropna().drop_duplicates()
-        agg = agg.merge(vc, on="video_name", how="left")
-    else:
-        agg["view_count"] = np.nan
-
-    agg = agg[agg["views"] >= min_views]
-    agg["repeat_share_pct"] = (agg["repeat_share"]*100).round(1)
-
-    st.caption("Sort columns; export below.")
-    st.dataframe(agg.sort_values("views", ascending=False), use_container_width=True, hide_index=True)
-
-    topn = st.slider("Top N videos", 3, 50, 10)
-    fig4 = px.bar(
-        agg.sort_values("views", ascending=False).head(topn),
-        x="video_name", y="views",
-        color=("category" if "category" in agg.columns else None),
-        title="Top Videos by Views"
-    )
-    fig4.update_layout(xaxis_title="", yaxis_title="Views", height=520)
-    st.plotly_chart(fig4, use_container_width=True)
-
-    csv = agg.to_csv(index=False).encode("utf-8")
-    st.download_button("Download leaderboard CSV", csv, file_name="video_leaderboard.csv", mime="text/csv")
-
-# -------- Engagement Quality --------
-with tab3:
-    # If completion flag exists in watch, show completion distribution & scatter vs views
-    if "done" in f.columns and f["done"].notna().any():
-        st.subheader("Completion Breakdown")
-        counts = f["done"].value_counts(dropna=False)
-        pie = pd.DataFrame({
-            "Status": ["Completed" if k is True else ("Not Completed" if k is False else "Unknown") for k in counts.index],
-            "Count": counts.values
-        })
-        fig3 = px.pie(pie, names="Status", values="Count", title="Completion Breakdown")
+    with right:
+        ampm = f[\"am_pm\"].value_counts()
+        pie_df = pd.DataFrame({\"Period\":[\"AM\",\"PM\"], \"Views\":[int(ampm.get(\"AM\",0)), int(ampm.get(\"PM\",0))]})
+        fig3 = px.pie(pie_df, names=\"Period\", values=\"Views\", hole=0.5, title=\"AM vs PM Engagement\")
         st.plotly_chart(fig3, use_container_width=True)
 
-    st.subheader("Viewing Duration Distribution (min)")
-    fig5 = px.histogram(f, x="duration_min", nbins=30, title="Distribution of Viewing Duration")
-    fig5.update_layout(xaxis_title="Duration (min)", yaxis_title="Frequency", height=520)
-    st.plotly_chart(fig5, use_container_width=True)
+        mdur = f.groupby(\"month\")[\"duration_min\"].mean().reset_index()
+        if not mdur.empty:
+            fig4 = px.line(mdur, x=\"month\", y=\"duration_min\", markers=True, title=\"Avg Duration by Month\")
+            fig4.update_layout(xaxis_title=\"\", yaxis_title=\"Avg duration (min)\", height=360)
+            st.plotly_chart(fig4, use_container_width=True)
 
-    by_video = f.groupby(["video_name","category"] if "category" in f.columns else ["video_name"]).agg(
-        avg_duration=("duration_min","mean"),
-        q25=("duration_min", lambda s: s.quantile(0.25)),
-        q75=("duration_min", lambda s: s.quantile(0.75)),
-        views=("viewer_id","count"),
-    ).reset_index()
-
-    fig6 = px.scatter(
-        by_video, x="views", y="avg_duration",
-        hover_data=[c for c in ["video_name","category"] if c in by_video.columns],
-        title="Avg Duration vs Views (per video)"
-    )
-    fig6.update_layout(xaxis_title="Views", yaxis_title="Avg duration (min)", height=520)
-    st.plotly_chart(fig6, use_container_width=True)
-
-# -------- Repeat Viewing --------
-with tab4:
-    if "plays_user_video" in f.columns:
-        fig7 = px.histogram(f, x="plays_user_video", nbins=10, title="Plays per User per Video")
-        fig7.update_layout(xaxis_title="Plays (user-video)", yaxis_title="Count", height=520)
-        st.plotly_chart(fig7, use_container_width=True)
-
-        rep = f.groupby("video_name").agg(
-            pct_repeat=("plays_user_video", lambda s: (s>1).mean() if s.notna().any() else np.nan),
-            views=("viewer_id","count"),
-        ).reset_index()
-        rep["pct_repeat"] = (rep["pct_repeat"]*100).round(1)
-
-        fig8 = px.bar(
-            rep.sort_values("pct_repeat", ascending=False).head(15),
-            x="video_name", y="pct_repeat",
-            title="Videos with Highest Repeat-View %"
-        )
-        fig8.update_layout(xaxis_title="Video", yaxis_title="Repeat view %", height=520)
-        st.plotly_chart(fig8, use_container_width=True)
+with tab2:
+    if \"view_count\" in counts_raw.columns or \"view_count\" in counts.columns:
+        # ensure counts df normalized
+        cc = pd.DataFrame(counts)
+        cc[\"video_label\"] = cc[\"video_name\"].fillna(cc[\"video_id\"])
+        cc = cc.dropna(subset=[\"view_count\"]).copy()
+        mode = st.radio(\"Ranking\", [\"Most Watched\",\"Least Watched\"], index=0, horizontal=True)
+        if mode == \"Most Watched\":
+            view = cc.sort_values(\"view_count\", ascending=False).head(10)
+        else:
+            view = cc.sort_values(\"view_count\", ascending=True).head(10)
+        fig5 = px.bar(view, x=\"video_label\", y=\"view_count\", title=f\"Top 10 — {mode} (Video Counts)\")
+        fig5.update_layout(xaxis_title=\"Video\", yaxis_title=\"View count\", height=520)
+        st.plotly_chart(fig5, use_container_width=True)
+        st.dataframe(view[[\"video_id\",\"video_name\",\"view_count\"]], use_container_width=True, hide_index=True)
     else:
-        st.info("Repeat viewing requires both viewer_id and video_name in watch history.")
+        st.info(\"Video Counts file has no 'view_count' detected.\")
 
-# -------- Time Heatmap --------
-with tab5:
+with tab3:
+    c1, c2 = st.columns([1,1], gap=\"large\")
+    with c1:
+        if \"done\" in f.columns and f[\"done\"].notna().any():
+            counts_done = f[\"done\"].value_counts(dropna=False)
+            pie = pd.DataFrame({
+                \"Status\": [\"Completed\" if k is True else (\"Not Completed\" if k is False else \"Unknown\") for k in counts_done.index],
+                \"Count\": counts_done.values
+            })
+            fig6 = px.pie(pie, names=\"Status\", values=\"Count\", title=\"Completion Breakdown\")
+            st.plotly_chart(fig6, use_container_width=True)
+        if \"duration_min\" in f:
+            fig7 = px.histogram(f, x=\"duration_min\", nbins=30, title=\"Viewing Duration Distribution (min)\")
+            fig7.update_layout(xaxis_title=\"Duration (min)\", yaxis_title=\"Frequency\", height=420)
+            st.plotly_chart(fig7, use_container_width=True)
+    with c2:
+        if \"parent_or_child\" in f.columns and f[\"parent_or_child\"].notna().any():
+            box = f.dropna(subset=[\"parent_or_child\",\"duration_min\"])
+            if not box.empty:
+                fig8 = px.box(box, x=\"parent_or_child\", y=\"duration_min\", points=\"suspectedoutliers\",
+                              title=\"Duration by Video Type (Parent vs Child)\")
+                fig8.update_layout(xaxis_title=\"\", yaxis_title=\"Duration (min)\", height=420)
+                st.plotly_chart(fig8, use_container_width=True)
+        if \"category\" in f.columns and f[\"category\"].notna().any():
+            cat = f.groupby(\"category\")[\"duration_min\"].mean().reset_index().sort_values(\"duration_min\", ascending=False)
+            if not cat.empty:
+                fig9 = px.bar(cat, x=\"category\", y=\"duration_min\", title=\"Avg Duration by Category/Module\")
+                fig9.update_layout(xaxis_title=\"\", yaxis_title=\"Avg duration (min)\", height=420)
+                st.plotly_chart(fig9, use_container_width=True)
+
+with tab4:
     if not f.empty:
-        order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        order = [\"Monday\",\"Tuesday\",\"Wednesday\",\"Thursday\",\"Friday\",\"Saturday\",\"Sunday\"]
         tmp = f.copy()
-        tmp["dow"] = pd.Categorical(tmp["dow"], categories=order, ordered=True)
-        heat = tmp.pivot_table(index="dow", columns="hour", values="video_name", aggfunc="count", fill_value=0)
-        heat = heat.sort_index()
-
-        fig9 = px.imshow(heat, aspect="auto", title="Engagement Heatmap (Day of Week × Hour)")
-        st.plotly_chart(fig9, use_container_width=True)
-
-        # Simple peak detection
-        daily = f.groupby("date").size().rename("views").reset_index()
-        if len(daily) >= 7:
-            daily["roll7"] = daily["views"].rolling(7, min_periods=1).mean()
-            peaks = daily[daily["views"] >= daily["roll7"]*1.25]  # 25% above 7-day avg
-            if not peaks.empty:
-                st.success(f"Detected {len(peaks)} peak day(s) of engagement.")
-                st.dataframe(peaks.sort_values('views', ascending=False), use_container_width=True, hide_index=True)
-
-# -------- Owner vs Viewer --------
-with tab6:
-    if "is_owner_view" in f.columns:
-        grp = f.groupby("is_owner_view").agg(
-            views=("video_name","count"),
-            mean_duration=("duration_min","mean"),
-            repeat_share=("plays_user_video", lambda s: (s>1).mean() if s.notna().any() else np.nan),
-        ).reset_index()
-        grp["is_owner_view"] = grp["is_owner_view"].map({True:"Owner viewing own video", False:"Other viewers"})
-        grp["repeat_share_pct"] = (grp["repeat_share"]*100).round(1)
-        st.dataframe(grp, use_container_width=True, hide_index=True)
-
-        fig10 = px.bar(grp, x="is_owner_view", y="mean_duration", title="Mean Duration: Owner vs Others")
-        fig10.update_layout(xaxis_title="", yaxis_title="Mean duration (min)", height=420)
+        tmp[\"dow\"] = pd.Categorical(tmp[\"dow\"], categories=order, ordered=True)
+        heat = tmp.pivot_table(index=\"dow\", columns=\"hour\", values=\"video_name\", aggfunc=\"count\", fill_value=0)
+        fig10 = px.imshow(heat, aspect=\"auto\", title=\"Engagement Heatmap (Day of Week × Hour)\")
         st.plotly_chart(fig10, use_container_width=True)
     else:
-        st.info("Owner vs Viewer comparison unavailable (missing owner/viewer IDs).")
+        st.info(\"No data to show.\")
 
-# ========================================
-# Downloads
-# ========================================
-st.markdown("---")
+with tab5:
+    if \"is_owner_view\" in f.columns:
+        grp = f.groupby(\"is_owner_view\").agg(
+            views=(\"video_name\",\"count\"),
+            mean_duration=(\"duration_min\",\"mean\"),
+            repeat_share=(\"plays_user_video\", lambda s: (s>1).mean() if s.notna().any() else np.nan),
+        ).reset_index()
+        grp[\"Viewer Type\"] = grp[\"is_owner_view\"].map({True:\"Owner viewing own video\", False:\"Other viewers\"})
+        grp[\"Repeat %\"] = (grp[\"repeat_share\"]*100).round(1)
+        show = grp[[\"Viewer Type\",\"views\",\"mean_duration\",\"Repeat %\"]].rename(columns={\"views\":\"Views\",\"mean_duration\":\"Avg Duration (min)\"})
+        st.dataframe(show, use_container_width=True, hide_index=True)
+        fig11 = px.bar(show, x=\"Viewer Type\", y=\"Avg Duration (min)\", title=\"Avg Duration — Owner vs Others\")
+        fig11.update_layout(xaxis_title=\"\", yaxis_title=\"Minutes\", height=420)
+        st.plotly_chart(fig11, use_container_width=True)
+    else:
+        st.info(\"Missing owner/viewer IDs for comparison.\")
+
+st.markdown(\"---\")
 st.download_button(
-    "📥 Download Filtered Rows (CSV)",
-    f.to_csv(index=False).encode("utf-8"),
-    "freefuse_filtered.csv",
-    "text/csv",
+    \"📥 Download Filtered Rows (CSV)\",
+    f.to_csv(index=False).encode(\"utf-8\"),
+    \"freefuse_filtered.csv\",
+    \"text/csv\",
 )
+""")
+code_path
