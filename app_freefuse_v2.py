@@ -80,7 +80,7 @@ watch["month"] = watch["created_date"].dt.to_period("M").dt.to_timestamp()
 # --------------------------- SIDEBAR FILTERS ---------------------------
 st.sidebar.header("📊 Filters")
 
-# Year
+# Year filter
 years = sorted(watch["year"].dropna().unique())
 selected_year = st.sidebar.selectbox("Select Year", years, index=len(years)-1 if years else 0)
 
@@ -98,7 +98,7 @@ with st.sidebar.expander("🎞️ Select Video Title(s)", expanded=False):
             placeholder="Select one or multiple videos..."
         )
 
-# Time of Day
+# Time of Day filter
 ampm_choice = st.sidebar.selectbox("Time of Day", ["Both", "AM", "PM"], index=0)
 
 # --------------------------- FILTER DATA ---------------------------
@@ -142,7 +142,7 @@ st.markdown("## 📊 Engagement Insights")
 
 if not fwh.empty and "created_date" in fwh.columns:
 
-    # 1️⃣ Line + Area Chart
+    # 1️⃣ Engagement Trend Over Time — LINE + AREA
     st.markdown("### 📈 Engagement Trend Over Time")
     daily = fwh.groupby("created_date").size().reset_index(name="views")
     fig1 = px.area(
@@ -155,7 +155,7 @@ if not fwh.empty and "created_date" in fwh.columns:
     fig1.update_layout(xaxis_title="Date", yaxis_title="Views", height=380)
     st.plotly_chart(fig1, use_container_width=True)
 
-    # 2️⃣ Lollipop Chart
+    # 2️⃣ Top 10 Videos by Average Duration — LOLLIPOP
     st.markdown("### ⏱️ Top 10 Videos by Average Duration Watched")
     if "video_title" in fwh.columns:
         top_avg = fwh.groupby("video_title")["duration_min"].mean().nlargest(10).reset_index()
@@ -171,7 +171,7 @@ if not fwh.empty and "created_date" in fwh.columns:
                            yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig2, use_container_width=True)
 
-    # 3️⃣ Violin Plot
+    # 3️⃣ Viewing Duration Distribution — VIOLIN PLOT
     st.markdown("### 🎬 Viewing Duration Distribution")
     fig3 = px.violin(
         fwh, y="duration_min", box=True, points="all",
@@ -181,8 +181,8 @@ if not fwh.empty and "created_date" in fwh.columns:
     fig3.update_layout(height=420, yaxis_title="Watch Duration (min)")
     st.plotly_chart(fig3, use_container_width=True)
 
-# 4️⃣ Horizontal Top-20 Comparison
-st.markdown("### 📊 Top 20 Videos Watched by Academic Year")
+# 4️⃣ Horizontal Top-10 Comparison by Academic Year
+st.markdown("### 📊 Top 10 Videos Watched by Academic Year")
 if "acad_year" in counts.columns:
     vc = counts[counts["acad_year"].isin(["2022/2023", "2023/2024"])]
     if not vc.empty:
@@ -192,7 +192,7 @@ if "acad_year" in counts.columns:
             .reset_index()
         )
         top_videos["total_views"] = top_videos.groupby("video_title")["view_count"].transform("sum")
-        top_videos = top_videos.sort_values("total_views", ascending=False).head(40)
+        top_videos = top_videos.sort_values("total_views", ascending=False).head(10)
 
         fig4 = px.bar(
             top_videos,
@@ -201,11 +201,11 @@ if "acad_year" in counts.columns:
             color="acad_year",
             barmode="group",
             orientation="h",
-            title="Top 20 Most Watched Videos by Academic Year",
+            title="Top 10 Most Watched Videos by Academic Year",
             color_discrete_sequence=["#9370DB", "#BA55D3"]
         )
         fig4.update_layout(
-            height=750,
+            height=600,
             xaxis_title="Views",
             yaxis_title="Video Title",
             yaxis={'categoryorder': 'total ascending'},
@@ -214,7 +214,7 @@ if "acad_year" in counts.columns:
         )
         st.plotly_chart(fig4, use_container_width=True)
 
-# 5️⃣ Bubble Scatter
+# 5️⃣ Repeat Users — BUBBLE SCATTER
 st.markdown("### 👥 Repeat Users — Videos Watched per User")
 if "user_id" in fwh.columns:
     per_user = fwh.groupby("user_id")["video_id"].nunique().value_counts().reset_index()
