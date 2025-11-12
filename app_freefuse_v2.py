@@ -1,12 +1,5 @@
-# Retry writing the file (the previous kernel state reset).
-
-from pathlib import Path
-
-code_path = "/mnt/data/app_freefuse_final.py"
-open(code_path, "w", encoding="utf-8").write("""
 import math
 from typing import Optional, List
-
 import numpy as np
 import pandas as pd
 import plotly.express as px
