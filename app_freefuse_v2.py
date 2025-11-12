@@ -22,7 +22,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-st.title(\"🎥 FreeFuse Interactive Engagement Dashboard\")
+st.title("🎥 FreeFuse Interactive Engagement Dashboard")
+
 
 WATCH_HISTORY_FILE = \"Main Nodes Watch History 2022-2024 School Year.xlsx\"
 VIDEO_COUNTS_FILE  = \"Video Counts 2022-2024.xlsx\"
