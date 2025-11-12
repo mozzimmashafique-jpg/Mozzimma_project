@@ -34,7 +34,22 @@ def load_and_clean_data(file_path):
     }
     df.rename(columns=rename_map, inplace=True)
 
-    # Clean video titles — remove symbols or invalid names
+    # Try to locate View_Date and View_Time columns
+    if "View_Date" not in df.columns:
+        possible_date_cols = [c for c in df.columns if "date" in c.lower()]
+        if possible_date_cols:
+            df["View_Date"] = df[possible_date_cols[0]]
+        else:
+            df["View_Date"] = pd.NaT
+
+    if "View_Time" not in df.columns:
+        possible_time_cols = [c for c in df.columns if "time" in c.lower()]
+        if possible_time_cols:
+            df["View_Time"] = df[possible_time_cols[0]]
+        else:
+            df["View_Time"] = "00:00:00"
+
+    # Clean video titles
     df["Video_Name"] = df["Video_Name"].astype(str)
     df["Video_Name"] = df["Video_Name"].str.replace(r"[^a-zA-Z0-9\s:/()-]+", "", regex=True)
     df = df[df["Video_Name"].str.strip() != ""]
@@ -50,7 +65,7 @@ def load_and_clean_data(file_path):
     # Convert duration to minutes
     df["Duration_Min"] = pd.to_numeric(df["Duration"], errors="coerce") / 60
 
-    # Normalize Done_Viewing column
+    # Normalize Done_Viewing
     df["Done_Viewing"] = df["Done_Viewing"].astype(str).str.strip().str.lower()
     df["Done_Viewing"] = df["Done_Viewing"].replace(
         {"1": True, "true": True, "yes": True, "0": False, "false": False, "no": False}
@@ -59,36 +74,30 @@ def load_and_clean_data(file_path):
 
     return df.dropna(subset=["Video_Name", "View_Timestamp"])
 
-# Load data
+# Load Data
 df = load_and_clean_data("ASPIRA_Watched_Duration_052825_V2.xlsx")
 
 # ------------------- SIDEBAR FILTERS -------------------
 st.sidebar.header("🔍 Filters")
 
-# Date range filter
 min_date = df["View_Timestamp"].min().date()
 max_date = df["View_Timestamp"].max().date()
-date_range = st.sidebar.date_input("📅 Select Date Range", [min_date, max_date])
 
-# Hour range filter
+date_range = st.sidebar.date_input("📅 Select Date Range", [min_date, max_date])
 hour_range = st.sidebar.slider("⏰ Time of Day Range (Hours)", 0, 23, (0, 23))
 
-# Video selection filter
 videos = ["All Videos"] + sorted(df["Video_Name"].unique().tolist())
 selected_videos = st.sidebar.multiselect("🎬 Select Video Title(s)", videos, default=["All Videos"])
 
-# Completion filter
 completion_filter = st.sidebar.radio("✅ Completion Status", ["All", "Completed", "Not Completed"])
-
-# Questionnaire filter
 questionnaire_filter = st.sidebar.selectbox("🧾 Has Questionnaire?", ["All", "Has questionnaire", "No questionnaire"])
 
 # Apply filters
 f = df.copy()
 f = f[
-    (f["View_Timestamp"].dt.date >= date_range[0])
-    & (f["View_Timestamp"].dt.date <= date_range[1])
-    & (f["Hour"].between(hour_range[0], hour_range[1]))
+    (f["View_Timestamp"].dt.date >= date_range[0]) &
+    (f["View_Timestamp"].dt.date <= date_range[1]) &
+    (f["Hour"].between(hour_range[0], hour_range[1]))
 ]
 
 if "All Videos" not in selected_videos:
@@ -130,10 +139,7 @@ st.plotly_chart(fig1, use_container_width=True)
 f["Day"] = f["View_Timestamp"].dt.day_name()
 heatmap_data = f.groupby(["Day", "Hour"]).size().reset_index(name="Views")
 fig2 = px.density_heatmap(
-    heatmap_data,
-    x="Hour",
-    y="Day",
-    z="Views",
+    heatmap_data, x="Hour", y="Day", z="Views",
     title="Engagement Heatmap (Day × Hour)",
     color_continuous_scale="Purples"
 )
@@ -144,7 +150,7 @@ hourly_views = f.groupby("Hour").size().reset_index(name="Views")
 fig3 = px.line(hourly_views, x="Hour", y="Views", markers=True, title="Hourly Viewership Trend")
 st.plotly_chart(fig3, use_container_width=True)
 
-# 4️⃣ Top 10 Videos by Total Views (with Completion Rate as Color)
+# 4️⃣ Top 10 Videos by Total Views (Completion Rate as Color)
 top_videos = (
     f.groupby("Video_Name")
      .agg(
@@ -175,7 +181,6 @@ questionnaire_participation = (
      .agg(Filled_Questionnaire=("Questionnaire_ID", lambda x: x.notna().any()))
      .reset_index()
 )
-
 viewer_counts = questionnaire_participation["Filled_Questionnaire"].value_counts().reset_index()
 viewer_counts.columns = ["Filled_Questionnaire", "Viewer_Count"]
 
