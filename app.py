@@ -1,8 +1,8 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import re
-import unicodedata
+import re, unicodedata
 
 # -------------------- PAGE STYLE --------------------
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", layout="wide")
@@ -15,221 +15,237 @@ h1,h2,h3{ color:#3b0764; }
 """, unsafe_allow_html=True)
 
 st.title("🎥 FreeFuse Engagement Dashboard")
-st.caption("An interactive visualization of ASPIRA students' engagement with FreeFuse videos.")
+st.caption("Interactive analytics on FreeFuse viewing behaviour (ASPIRA data).")
 
 # -------------------- HELPERS --------------------
 def norm(s: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', str(s).strip().lower())
 
-def pick_col(df: pd.DataFrame, want: str, candidates: list[str]) -> str | None:
+def pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     cols = list(df.columns)
     for c in candidates:
         if c in cols: return c
-    target_norms = [norm(c) for c in candidates]
-    name_by_norm = {norm(c): c for c in cols}
-    for t in target_norms:
-        if t in name_by_norm: return name_by_norm[t]
+    want_norm = [norm(c) for c in candidates]
+    by_norm = {norm(c): c for c in cols}
+    for t in want_norm:
+        if t in by_norm: return by_norm[t]
     for c in cols:
         nc = norm(c)
-        if any(t in nc for t in target_norms): return c
+        if any(t in nc for t in want_norm): return c
     return None
 
-# -------------------- CLEAN TITLES --------------------
 def clean_title_series(s: pd.Series) -> pd.Series:
-    """
-    Enhanced cleaning:
-    - Remove garbled, numeric-only, or symbol-only titles
-    - Normalize unicode
-    - Remove emojis / non-printables
-    """
+    """Remove garbled/symbol-only video titles"""
     s = s.astype(str).str.strip()
     s = s.apply(lambda x: unicodedata.normalize('NFKC', x))
-    s = s.str.replace(r'[^\x00-\x7F]+', '', regex=True)       # remove non-ascii
+    s = s.str.replace(r'[^\x00-\x7F]+', '', regex=True)
     s = s.str.replace(r'([^\w\s])\1+', r'\1', regex=True)
     s = s.str.replace(r'[_\-=~`^]+', ' ', regex=True)
     s = s.str.replace(r'\s+', ' ', regex=True).str.strip()
-    s = s.str.replace(r'^[\.\:\-\s0-9]+$', '', regex=True)    # remove numeric/symbol-only
+    s = s.mask(s.str.match(r'^[\.\:\-\s0-9]+$'))
     keep_mask = s.str.replace(r'[^A-Za-z0-9]+', '', regex=True).str.len() > 1
-    s = s.where(keep_mask)
-    return s
+    return s.where(keep_mask)
 
 # -------------------- LOAD & CLEAN --------------------
 @st.cache_data
-def load_and_clean(path: str) -> tuple[pd.DataFrame, dict]:
-    df = pd.read_excel(path)
-    df.columns = df.columns.str.strip()
+def load_and_clean(path: str):
+    raw = pd.read_excel(path)
+    raw.columns = raw.columns.str.strip()
 
-    colmap = {}
-    colmap["video_name"] = pick_col(df, "video name",
-        ["viewerChoices_VideoName","Video_Name","VideoName","video name"])
-    colmap["date"] = pick_col(df, "view date",
-        ["viewerChoices_ViewDate","View_Date","ViewDate","Date"])
-    colmap["time"] = pick_col(df, "view time",
-        ["viewerChoices_ViewTime","View_Time","ViewTime","Time"])
-    colmap["duration_sec"] = pick_col(df, "duration",
-        ["viewerChoices_ViewingDuration","Viewing_Duration_Sec","Duration","ViewingDuration"])
-    colmap["done"] = pick_col(df, "done",
-        ["viewerChoices_DoneViewing","Done_Viewing","Done","Completed"])
-    colmap["viewer"] = pick_col(df, "viewer", ["videoViewer","Viewer","User","Student"])
-    colmap["owner"] = pick_col(df, "owner", ["videoOwner","Owner","Instructor"])
+    c_vid   = pick_col(raw, ["viewerChoices_VideoId","VideoId","Video_ID"])
+    c_name  = pick_col(raw, ["viewerChoices_VideoName","Video_Name","VideoName","video name"])
+    c_dur   = pick_col(raw, ["viewerChoices_ViewingDuration","Viewing_Duration_Sec","ViewingDuration","Duration","Duration_Seconds"])
+    c_done  = pick_col(raw, ["viewerChoices_DoneViewing","Done_Viewing","Done","Completed","Completion"])
+    c_date  = pick_col(raw, ["viewerChoices_ViewDate","View_Date","ViewDate","Date"])
+    c_time  = pick_col(raw, ["viewerChoices_ViewTime","View_Time","ViewTime","Time"])
+    c_viewr = pick_col(raw, ["videoViewer","Viewer","User","Student"])
+    c_own   = pick_col(raw, ["videoOwner","Owner","Instructor"])
+    c_pub   = pick_col(raw, ["isPublished","Published"])
+    c_qid   = pick_col(raw, ["questionnaireId","QuestionnaireId"])
 
-    work = pd.DataFrame(index=df.index)
-    work["Video_Name"] = clean_title_series(df[colmap["video_name"]]) if colmap["video_name"] else pd.NA
+    df = pd.DataFrame(index=raw.index)
+    df["Video_Id"]   = raw[c_vid] if c_vid else pd.NA
+    df["Video_Name"] = clean_title_series(raw[c_name]) if c_name else pd.NA
 
-    # datetime
-    if colmap["date"] and colmap["time"]:
-        ts = pd.to_datetime(df[colmap["date"]].astype(str)+" "+df[colmap["time"]].astype(str), errors="coerce")
-    elif colmap["date"]:
-        ts = pd.to_datetime(df[colmap["date"]], errors="coerce")
+    # timestamp
+    if c_date and c_time:
+        ts = pd.to_datetime(raw[c_date].astype(str) + " " + raw[c_time].astype(str), errors="coerce")
+    elif c_date:
+        ts = pd.to_datetime(raw[c_date], errors="coerce")
     else:
         ts = pd.NaT
-    work["View_Timestamp"] = ts
-    work["View_DateOnly"] = pd.to_datetime(ts, errors="coerce").dt.date
-    work["Hour"] = pd.to_datetime(ts, errors="coerce").dt.hour
+    df["View_Timestamp"] = ts
+    df["View_Date"] = pd.to_datetime(ts, errors="coerce").dt.date
+    df["Hour"] = pd.to_datetime(ts, errors="coerce").dt.hour
+    df["Dow"]  = pd.to_datetime(ts, errors="coerce").dt.day_name()
 
-    # duration
-    work["Viewing_Duration_Min"] = pd.to_numeric(df[colmap["duration_sec"]], errors="coerce")/60.0 if colmap["duration_sec"] else pd.NA
+    df["Viewing_Duration_Min"] = pd.to_numeric(raw[c_dur], errors="coerce")/60.0 if c_dur else pd.NA
 
-    # completion
-    if colmap["done"]:
-        done = df[colmap["done"]].astype(str).str.strip().str.lower().map({
+    if c_done:
+        done = raw[c_done].astype(str).str.strip().str.lower().map({
             "yes":True,"true":True,"1":True,"y":True,"completed":True,
             "no":False,"false":False,"0":False,"n":False,"not completed":False
         })
-        work["Done_Viewing"] = done
+        df["Done_Viewing"] = done
     else:
-        work["Done_Viewing"] = pd.NA
+        df["Done_Viewing"] = pd.NA
 
-    work["Viewer"] = df[colmap["viewer"]] if colmap["viewer"] else pd.NA
-    work["Owner"]  = df[colmap["owner"]]  if colmap["owner"]  else pd.NA
+    df["Viewer"] = raw[c_viewr] if c_viewr else pd.NA
+    df["Owner"]  = raw[c_own]   if c_own   else pd.NA
+    df["isPublished"] = raw[c_pub] if c_pub else pd.NA
+    df["questionnaireId"] = raw[c_qid] if c_qid else pd.NA
+    df["Has_Questionnaire"] = df["questionnaireId"].notna() & (df["questionnaireId"].astype(str).str.len() > 0)
 
-    work = work.dropna(subset=["Video_Name","View_DateOnly"])
-    work = work[pd.to_numeric(work["Viewing_Duration_Min"], errors="coerce")>0]
-    work.drop_duplicates(inplace=True)
+    df = df.dropna(subset=["Video_Name","View_Date"]).copy()
+    df = df[pd.to_numeric(df["Viewing_Duration_Min"], errors="coerce") > 0]
+    df.drop_duplicates(inplace=True)
+    return df
 
-    debug = {"detected_columns": colmap, "raw_columns": list(df.columns)}
-    return work, debug
-
-DATAFILE = "Freefuse_Data.xlsx"
-df, debug = load_and_clean(DATAFILE)
+DATAFILE = "ASPIRA_Watched_Duration_052825_V2.xlsx"
+df = load_and_clean(DATAFILE)
 
 # -------------------- SIDEBAR FILTERS --------------------
 st.sidebar.header("🔎 Filters")
 
-# Year filter
-years = sorted(pd.Series(df["View_Timestamp"]).dt.year.dropna().unique().astype(int).tolist())
-year_selected = st.sidebar.selectbox("📅 Select Year", options=years, index=len(years)-1)
+# Date range picker
+if df["View_Date"].notna().any():
+    min_date = pd.to_datetime(df["View_Date"]).min()
+    max_date = pd.to_datetime(df["View_Date"]).max()
+else:
+    min_date = pd.to_datetime("2024-01-01")
+    max_date = pd.to_datetime("2024-12-31")
 
-# Video filter with 'Select All'
+date_range = st.sidebar.date_input("📅 Select Date Range", [min_date, max_date])
+
+# Time-of-day range picker
+st.sidebar.markdown("⏰ **Time of Day Range (Hours)**")
+time_range = st.sidebar.slider("Select hour range", 0, 23, (0, 23))
+
+# Video filter
 videos = sorted(df["Video_Name"].dropna().unique().tolist())
-videos_all = ["All Videos"] + videos
-video_filter = st.sidebar.multiselect("🎬 Select Video Title(s)", videos_all, default=["All Videos"])
+video_opts = ["All Videos"] + videos
+video_sel = st.sidebar.multiselect("🎬 Select Video Title(s)", options=video_opts, default=["All Videos"])
 
-# Time of Day
-time_choice = st.sidebar.selectbox("🕐 Time of Day", ["Both","AM","PM"])
+# Completion
+comp_choice = st.sidebar.radio("✅ Completion Status", ["All","Completed","Not Completed"], index=0)
 
-# Apply filters
+# Published
+pub_vals = sorted(df["isPublished"].dropna().astype(str).unique().tolist())
+pub_sel = st.sidebar.multiselect("📰 Publish Status", options=["All"]+pub_vals, default=["All"])
+
+# Questionnaire
+q_sel = st.sidebar.selectbox("📝 Has Questionnaire?", ["All","Has questionnaire","No questionnaire"])
+
+# -------------------- APPLY FILTERS --------------------
 f = df.copy()
-f = f[pd.to_datetime(f["View_Timestamp"]).dt.year == year_selected]
-if "All Videos" not in video_filter:
-    f = f[f["Video_Name"].isin(video_filter)]
 
-# AM / PM
-if time_choice != "Both":
-    if time_choice == "AM":
-        f = f[(f["Hour"]>=0)&(f["Hour"]<12)]
-    else:
-        f = f[(f["Hour"]>=12)&(f["Hour"]<24)]
+# Date filter
+if isinstance(date_range, list) and len(date_range) == 2:
+    start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+else:
+    start, end = min_date, max_date
+f = f[(pd.to_datetime(f["View_Date"]) >= start) & (pd.to_datetime(f["View_Date"]) <= end)]
 
-# -------------------- KPI SECTION --------------------
+# Time range filter
+f = f[(f["Hour"] >= time_range[0]) & (f["Hour"] <= time_range[1])]
+
+# Video filter
+if "All Videos" not in video_sel:
+    f = f[f["Video_Name"].isin(video_sel)]
+
+# Completion filter
+if comp_choice == "Completed":
+    f = f[f["Done_Viewing"] == True]
+elif comp_choice == "Not Completed":
+    f = f[f["Done_Viewing"] == False]
+
+# Publish filter
+if "All" not in pub_sel:
+    f = f[f["isPublished"].astype(str).isin(pub_sel)]
+
+# Questionnaire filter
+if q_sel == "Has questionnaire":
+    f = f[f["Has_Questionnaire"]]
+elif q_sel == "No questionnaire":
+    f = f[~f["Has_Questionnaire"]]
+
+# fallback
+if f.empty:
+    st.warning("No data matches filters — showing full dataset for visuals.")
+    f = df.copy()
+
+# -------------------- KPIs --------------------
 st.subheader("📊 Key Engagement Metrics")
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("🎬 Total Views", f"{len(f):,}")
-c2.metric("👥 Unique Viewers", f[f["Viewer"].notna()]["Viewer"].nunique() if "Viewer" in f else 0)
-c3.metric("⏱️ Avg Duration (min)", f"{pd.to_numeric(f['Viewing_Duration_Min'], errors='coerce').mean():.2f}" if not f.empty else "0.00")
+c2.metric("👥 Unique Viewers", f[f["Viewer"].notna()]["Viewer"].nunique())
+c3.metric("⏱️ Avg Duration (min)", f"{pd.to_numeric(f['Viewing_Duration_Min']).mean():.2f}")
 c4.metric("✅ Completion Rate", f"{(f['Done_Viewing'].mean()*100):.1f}%" if f['Done_Viewing'].notna().any() else "0.0%")
 st.markdown("---")
 
 # -------------------- VISUALIZATIONS --------------------
-if not f.empty:
+# 1️⃣ Views over time
+trend = f.groupby("View_Date").size().reset_index(name="Views")
+fig1 = px.line(trend, x="View_Date", y="Views", markers=True, title="Views Over Time")
+st.plotly_chart(fig1, use_container_width=True)
 
-    # 1️⃣ Engagement trend
-    st.subheader("📈 Engagement Trend Over Time")
-    trend = f.groupby("View_DateOnly").size().reset_index(name="Total_Views")
-    fig1 = px.line(trend, x="View_DateOnly", y="Total_Views", markers=True,
-                   title="Views Over Time", color_discrete_sequence=["#7B68EE"])
-    fig1.update_layout(xaxis_title="Date", yaxis_title="Views")
-    st.plotly_chart(fig1, use_container_width=True)
+# 2️⃣ Heatmap day vs hour
+heat = f.groupby(["Dow","Hour"]).size().reset_index(name="Views")
+fig2 = px.density_heatmap(heat, x="Hour", y="Dow", z="Views", title="Engagement Heatmap (Day × Hour)")
+st.plotly_chart(fig2, use_container_width=True)
 
-    # 2️⃣ Top 10 videos by avg duration
-    st.subheader("🏆 Top 10 Videos by Avg Duration")
-    top = (f.groupby("Video_Name", as_index=False)["Viewing_Duration_Min"]
-             .mean().sort_values("Viewing_Duration_Min", ascending=False).head(10))
-    fig2 = px.bar(top, x="Video_Name", y="Viewing_Duration_Min",
-                  title="Top 10 Videos by Avg Duration (Minutes)",
-                  color="Viewing_Duration_Min", color_continuous_scale="Purples")
-    fig2.update_layout(xaxis_title="Video", yaxis_title="Avg Duration (min)")
-    st.plotly_chart(fig2, use_container_width=True)
+# 3️⃣ Hourly line chart (peak hours)
+hourly = f.groupby("Hour").size().reset_index(name="Views")
+fig3 = px.line(hourly, x="Hour", y="Views", markers=True, title="Hourly Viewership (Peak Hours)")
+st.plotly_chart(fig3, use_container_width=True)
 
-    # 3️⃣ Top 10 videos by completion rate
-    st.subheader("✅ Top 10 Videos by Completion Rate")
-    comp = (f.groupby("Video_Name")["Done_Viewing"].mean()
-              .reset_index().rename(columns={"Done_Viewing":"Completion_Rate"})
-              .sort_values("Completion_Rate", ascending=False).head(10))
-    fig3 = px.bar(comp, x="Video_Name", y="Completion_Rate",
-                  title="Top 10 Videos by Completion Rate",
-                  color="Completion_Rate", color_continuous_scale="Greens")
-    st.plotly_chart(fig3, use_container_width=True)
+# 4️⃣ Top 10 videos by duration
+top_dur = f.groupby("Video_Name", as_index=False)["Viewing_Duration_Min"].mean().sort_values("Viewing_Duration_Min", ascending=False).head(10)
+fig4 = px.bar(top_dur, x="Video_Name", y="Viewing_Duration_Min", color="Viewing_Duration_Min", color_continuous_scale="Purples",
+              title="Top 10 Videos by Average Duration (Minutes)")
+st.plotly_chart(fig4, use_container_width=True)
 
-    # 4️⃣ AM vs PM engagement
-    st.subheader("🌞 AM vs 🌙 PM Engagement Comparison")
-    f["TimeOfDay"] = f["Hour"].apply(lambda h: "AM" if h<12 else "PM")
-    ampm = f.groupby("TimeOfDay").size().reset_index(name="Views")
-    fig_ampm = px.bar(ampm, x="TimeOfDay", y="Views", color="TimeOfDay",
-                      title="Views Distribution: AM vs PM",
-                      color_discrete_map={"AM":"#9370DB","PM":"#8A2BE2"})
-    st.plotly_chart(fig_ampm, use_container_width=True)
+# 5️⃣ Top 10 videos by completion
+if f["Done_Viewing"].notna().any():
+    comp = f.groupby("Video_Name")["Done_Viewing"].mean().reset_index().sort_values("Done_Viewing", ascending=False).head(10)
+    fig5 = px.bar(comp, x="Video_Name", y="Done_Viewing", color="Done_Viewing", color_continuous_scale="Greens",
+                  title="Top 10 Videos by Completion Rate")
+    st.plotly_chart(fig5, use_container_width=True)
 
-    # 5️⃣ Heatmap by day and hour
-    st.subheader("🔥 Engagement Heatmap (Day vs Hour)")
-    f["Day"] = pd.to_datetime(f["View_Timestamp"]).dt.day_name()
-    heat = f.groupby(["Day","Hour"]).size().reset_index(name="Views")
-    fig_heat = px.density_heatmap(heat, x="Hour", y="Day", z="Views",
-                                  title="Engagement by Day & Hour",
-                                  color_continuous_scale="Purples")
-    st.plotly_chart(fig_heat, use_container_width=True)
+# 6️⃣ Duration distribution
+fig6 = px.histogram(f, x="Viewing_Duration_Min", nbins=30, title="Distribution of Viewing Duration (Minutes)")
+st.plotly_chart(fig6, use_container_width=True)
 
-    # 6️⃣ Viewer vs Owner
-    st.subheader("👤 Avg Duration: Owner vs Viewer")
-    f["IsOwner"] = f["Viewer"] == f["Owner"]
-    grp = f.groupby("IsOwner")["Viewing_Duration_Min"].mean().reset_index()
-    grp["Group"] = grp["IsOwner"].map({True:"Owner", False:"Viewer"})
-    fig_owner = px.bar(grp, x="Group", y="Viewing_Duration_Min",
-                       color="Group", color_discrete_map={"Owner":"#8B008B","Viewer":"#9370DB"},
-                       title="Avg Viewing Duration: Owner vs Viewer")
-    st.plotly_chart(fig_owner, use_container_width=True)
+# 7️⃣ Owner vs viewer
+f["IsOwner"] = f["Viewer"] == f["Owner"]
+grp1 = f.groupby("IsOwner")["Viewing_Duration_Min"].mean().reset_index()
+grp1["Group"] = grp1["IsOwner"].map({True:"Owner", False:"Viewer"})
+fig7 = px.bar(grp1, x="Group", y="Viewing_Duration_Min", color="Group", title="Avg Viewing Duration: Owner vs Viewer")
+st.plotly_chart(fig7, use_container_width=True)
 
-    # 7️⃣ Repeat viewing
-    st.subheader("🔁 Repeat Viewers per Video")
-    replays = f.groupby(["Viewer","Video_Name"]).size().reset_index(name="Count")
-    multi = replays[replays["Count"]>1]
-    replay_counts = multi["Video_Name"].value_counts().head(10)
-    fig_replay = px.bar(x=replay_counts.index, y=replay_counts.values,
-                        title="Top 10 Videos by Repeat Viewers",
-                        labels={"x":"Video","y":"Repeat Viewers"})
-    st.plotly_chart(fig_replay, use_container_width=True)
+# 8️⃣ Repeat viewers
+rep = f.groupby(["Viewer","Video_Name"]).size().reset_index(name="Count")
+multi = rep[rep["Count"]>1]
+rep_ct = multi["Video_Name"].value_counts().head(10)
+if not rep_ct.empty:
+    fig8 = px.bar(x=rep_ct.index, y=rep_ct.values, title="Top 10 Videos by Repeat Viewers", labels={"x":"Video","y":"Repeat Viewers"})
+    st.plotly_chart(fig8, use_container_width=True)
 
-    # 8️⃣ Duration distribution
-    st.subheader("📊 Viewing Duration Distribution")
-    fig_hist = px.histogram(f, x="Viewing_Duration_Min", nbins=30,
-                            title="Distribution of Viewing Duration (Minutes)",
-                            color_discrete_sequence=["#6A5ACD"])
-    st.plotly_chart(fig_hist, use_container_width=True)
+# 9️⃣ Publish status
+if f["isPublished"].notna().any():
+    pubv = f.groupby(f["isPublished"].astype(str)).size().reset_index(name="Views")
+    fig9 = px.bar(pubv, x="isPublished", y="Views", title="Views by Publish Status")
+    st.plotly_chart(fig9, use_container_width=True)
+
+# 🔟 Questionnaire presence
+qv = f.groupby(f["Has_Questionnaire"].map({True:"Has questionnaire", False:"No questionnaire"})).size().reset_index(name="Views")
+fig10 = px.bar(qv, x="Has_Questionnaire", y="Views", title="Views vs Questionnaire Presence")
+st.plotly_chart(fig10, use_container_width=True)
 
 # -------------------- DOWNLOAD --------------------
 st.download_button(
     "📥 Download Filtered Data (CSV)",
     f.to_csv(index=False).encode("utf-8"),
-    "Freefuse_Cleaned_Filtered.csv",
+    "Freefuse_Filtered.csv",
     "text/csv"
 )
