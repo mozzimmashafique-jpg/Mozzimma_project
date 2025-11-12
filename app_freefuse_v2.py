@@ -239,7 +239,7 @@ if parent is not None and not parent.empty:
     watch = watch.merge(parent[use_cols + meta_cols].drop_duplicates(), on=use_cols, how="left")
 
 # Derived fields
-watch["month"] = pd.to_datetime(watch["date"]).astype("datetime64[M]")
+watch["month"] = pd.to_datetime(watch["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
 watch["is_owner_view"] = watch["viewer_id"].astype(str) == watch["owner_id"].astype(str)
 # repeat plays: per viewer per video
 repeat = watch.groupby(["viewer_id","video_name"]).size().rename("plays_user_video").reset_index()
