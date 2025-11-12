@@ -3,8 +3,9 @@ import numpy as np
 import plotly.express as px
 import streamlit as st
 
-# --------------------------- PAGE SETUP ---------------------------
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", page_icon="🎥", layout="wide")
+
+# --------------------------- PAGE STYLE ---------------------------
 st.markdown("""
 <style>
   h1, h2, h3 { color:#2b1b6b; }
@@ -14,116 +15,91 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.title("🎥 FreeFuse Interactive Engagement Dashboard")
 
-# --------------------------- FILE NAMES (as confirmed) ---------------------------
+# --------------------------- FILE PATHS ---------------------------
 WATCH_HISTORY_FILE = "Main Nodes Watch History 2022-2024 School Year.xlsx"
-VIDEO_COUNTS_FILE  = "Video Counts 2022-2024.xlsx"
+VIDEO_COUNTS_FILE = "Video Counts 2022-2024.xlsx"
 
-# --------------------------- HELPERS ---------------------------
-def to_minutes(series: pd.Series) -> pd.Series:
+# --------------------------- HELPER ---------------------------
+def normalize_cols(df):
+    df.columns = (
+        df.columns.str.strip()
+        .str.replace(r"\s+", " ", regex=True)
+        .str.replace("_", " ")
+        .str.title()
+    )
+    return df
+
+def to_minutes(series):
     s = pd.to_numeric(series, errors="coerce")
-    # If big values, assume seconds and convert to minutes
     if s.dropna().median() > 200:
         s = s / 60.0
     return s
 
-def classify_ampm_from_string(t: str) -> str:
+def classify_ampm(t):
+    t = str(t).strip()
+    if "AM" in t.upper(): return "AM"
+    if "PM" in t.upper(): return "PM"
     try:
-        t = str(t).strip()
-        # handle "HH:MM[:SS]" 24h or AM/PM strings
-        if "AM" in t.upper() or "PM" in t.upper():
-            return "AM" if "AM" in t.upper() else "PM"
-        parts = t.split(":")
-        hour = int(parts[0])
-        return "AM" if 0 <= hour < 12 else "PM"
-    except Exception:
-        return "Unknown"
+        hour = int(t.split(":")[0])
+        return "AM" if hour < 12 else "PM"
+    except: return "Unknown"
 
 # --------------------------- LOAD DATA ---------------------------
 try:
-    # Watch history: pick first non-empty sheet
-    xfile = pd.ExcelFile(WATCH_HISTORY_FILE)
-    watch = None
-    for sh in xfile.sheet_names:
-        df = pd.read_excel(xfile, sheet_name=sh)
-        if not df.empty:
-            watch = df.copy()
-            break
+    watch = pd.read_excel(WATCH_HISTORY_FILE)
     counts = pd.read_excel(VIDEO_COUNTS_FILE)
+    watch = normalize_cols(watch)
+    counts = normalize_cols(counts)
 except Exception as e:
-    st.error(f"❌ Could not load files: {e}")
+    st.error(f"❌ Error loading data: {e}")
     st.stop()
 
-# --------------------------- STANDARDIZE COLUMNS ---------------------------
-watch.columns  = [c.strip() for c in watch.columns]
-counts.columns = [c.strip() for c in counts.columns]
-
-# Expected columns based on your screenshot
-REQUIRED_WATCH = ["Video ID", "Video Title", "duration (mins)", "created_Date", "Watched Time", "User ID"]
-REQUIRED_COUNTS = ["Video ID", "Video Title", "View Count", "Year"]
-
-missing_w = [c for c in REQUIRED_WATCH if c not in watch.columns]
-missing_c = [c for c in REQUIRED_COUNTS if c not in counts.columns]
-if missing_w:
-    st.error(f"⚠️ Missing columns in Watch History: {missing_w}")
-    st.stop()
-if missing_c:
-    st.error(f"⚠️ Missing columns in Video Counts: {missing_c}")
-    st.stop()
-
-# --------------------------- CLEAN WATCH HISTORY ---------------------------
-wh = watch.rename(columns={
-    "Video ID": "video_id",
+# --------------------------- FIX COLUMNS ---------------------------
+col_map_watch = {
+    "Video Id": "video_id",
     "Video Title": "video_title",
-    "duration (mins)": "duration_min",
-    "created_Date": "created_date",
+    "Duration (Mins)": "duration_min",
+    "Created Date": "created_date",
     "Watched Time": "watched_time",
-    "User ID": "user_id"
-}).copy()
+    "User Id": "user_id",
+}
+for col, new in col_map_watch.items():
+    if col in watch.columns:
+        watch.rename(columns={col: new}, inplace=True)
 
-# Dates & derived fields
-wh["created_date"] = pd.to_datetime(wh["created_date"], errors="coerce")
-wh["year"] = wh["created_date"].dt.year
-wh["month"] = wh["created_date"].dt.to_period("M").dt.to_timestamp()
-
-# Duration normalized to minutes
-wh["duration_min"] = to_minutes(wh["duration_min"])
-
-# AM/PM from time text (fallback to AM if unknown)
-wh["am_pm"] = wh["watched_time"].apply(classify_ampm_from_string)
-wh.loc[~wh["am_pm"].isin(["AM", "PM"]), "am_pm"] = "Unknown"
-
-# --------------------------- CLEAN VIDEO COUNTS ---------------------------
-vc = counts.rename(columns={
-    "Video ID": "video_id",
+col_map_counts = {
+    "Video Id": "video_id",
     "Video Title": "video_title",
     "View Count": "view_count",
-    "Year": "acad_year"  # e.g., "2022/2023", "2023/2024"
-}).copy()
+    "Year": "acad_year",
+}
+for col, new in col_map_counts.items():
+    if col in counts.columns:
+        counts.rename(columns={col: new}, inplace=True)
 
-# Some files have mixed year labels; keep only rows with an acad_year label
-vc = vc.dropna(subset=["acad_year", "video_id"])
+missing_cols = [c for c in col_map_watch.values() if c not in watch.columns]
+if missing_cols:
+    st.warning(f"⚠️ Missing columns in Watch History: {missing_cols}")
 
-# --------------------------- SIDEBAR FILTERS ---------------------------
+# --------------------------- CLEAN DATA ---------------------------
+watch["created_date"] = pd.to_datetime(watch.get("created_date"), errors="coerce")
+watch["duration_min"] = to_minutes(watch.get("duration_min"))
+watch["am_pm"] = watch.get("watched_time", "").apply(classify_ampm)
+watch["year"] = watch["created_date"].dt.year
+watch["month"] = watch["created_date"].dt.to_period("M").dt.to_timestamp()
+
+counts = counts.dropna(subset=["acad_year", "video_id"])
+
+# --------------------------- FILTERS ---------------------------
 st.sidebar.header("📊 Filters")
 
-# Year dropdown (from watch history calendar year)
-years = sorted(wh["year"].dropna().unique().tolist())
-if not years:
-    st.info("No years found in watch history.")
-    st.stop()
-selected_year = st.sidebar.selectbox("Year", options=years, index=len(years)-1)
+years = sorted(watch["year"].dropna().unique())
+selected_year = st.sidebar.selectbox("Year", years, index=len(years)-1)
+titles = sorted(watch["video_title"].dropna().unique())
+selected_titles = st.sidebar.multiselect("Video Title(s)", titles, default=titles[:10])
+ampm_choice = st.sidebar.selectbox("Time of Day", ["Both", "AM", "PM"], index=0)
 
-# Video titles multiselect (dropdown, multiple allowed)
-all_titles = wh["video_title"].dropna().unique().tolist()
-all_titles = sorted(all_titles)
-default_titles = all_titles if len(all_titles) <= 10 else all_titles[:10]
-selected_titles = st.sidebar.multiselect("Video Title(s)", options=all_titles, default=default_titles)
-
-# AM/PM dropdown
-ampm_choice = st.sidebar.selectbox("Time of Day", options=["Both", "AM", "PM"], index=0)
-
-# --------------------------- APPLY FILTERS ---------------------------
-fwh = wh[wh["year"] == selected_year].copy()
+fwh = watch.query("year == @selected_year")
 if selected_titles:
     fwh = fwh[fwh["video_title"].isin(selected_titles)]
 if ampm_choice != "Both":
@@ -132,117 +108,70 @@ if ampm_choice != "Both":
 # --------------------------- KPIs ---------------------------
 st.subheader("📌 Key Metrics")
 c1, c2, c3, c4, c5 = st.columns(5)
-
 total_views = len(fwh)
 unique_videos = fwh["video_id"].nunique()
-total_dur = fwh["duration_min"].sum(skipna=True)
-avg_dur = fwh["duration_min"].mean(skipna=True)
+total_dur = fwh["duration_min"].sum()
+avg_dur = fwh["duration_min"].mean()
+most_engaged = fwh.groupby("video_title")["duration_min"].sum().idxmax() if not fwh.empty else "—"
 
-most_engaged_title = "—"
-if not fwh.empty:
-    g = fwh.groupby(["video_id", "video_title"])["duration_min"].sum().reset_index()
-    g = g.sort_values("duration_min", ascending=False)
-    most_engaged_title = g.iloc[0]["video_title"]
-
-with c1:
-    st.markdown(f"<div class='metric-card'><h4>Total Views</h4><h2>{total_views:,}</h2></div>", unsafe_allow_html=True)
-with c2:
-    st.markdown(f"<div class='metric-card'><h4>Unique Videos</h4><h2>{unique_videos:,}</h2></div>", unsafe_allow_html=True)
-with c3:
-    st.markdown(f"<div class='metric-card'><h4>Total Watch (min)</h4><h2>{total_dur:,.1f}</h2></div>", unsafe_allow_html=True)
-with c4:
-    st.markdown(f"<div class='metric-card'><h4>Avg Watch (min)</h4><h2>{(avg_dur if not np.isnan(avg_dur) else 0):.2f}</h2></div>", unsafe_allow_html=True)
-with c5:
-    st.markdown(f"<div class='metric-card'><h4>Most Engaged Video</h4><h3>{most_engaged_title}</h3></div>", unsafe_allow_html=True)
+for c, (label, value) in zip(
+    [c1, c2, c3, c4, c5],
+    [
+        ("Total Views", total_views),
+        ("Unique Videos", unique_videos),
+        ("Total Watch (min)", f"{total_dur:,.1f}"),
+        ("Avg Watch (min)", f"{avg_dur:.2f}" if not np.isnan(avg_dur) else "0"),
+        ("Most Engaged Video", most_engaged),
+    ],
+):
+    c.markdown(f"<div class='metric-card'><h4>{label}</h4><h2>{value}</h2></div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
 # --------------------------- VISUALS ---------------------------
-
-# 1) Engagement trend over time (daily)
-st.markdown("### 📊 Engagement Trend Over Time (Daily Views)")
-trend = fwh.groupby("created_date").size().reset_index(name="views")
-if not trend.empty:
-    fig1 = px.line(trend, x="created_date", y="views", markers=True)
-    fig1.update_layout(xaxis_title="", yaxis_title="Views", height=380)
-    st.plotly_chart(fig1, use_container_width=True)
-else:
-    st.info("No events in the selected filters.")
-
-# 2) Top 10 videos by average duration
-st.markdown("### ⏱️ Top 10 Videos by Average Duration Watched")
 if not fwh.empty:
-    top_avg = (
-        fwh.groupby(["video_id", "video_title"])["duration_min"]
-        .mean()
-        .reset_index()
-        .sort_values("duration_min", ascending=False)
-        .head(10)
-    )
+    # Engagement Trend
+    st.markdown("### 📈 Engagement Trend Over Time")
+    daily = fwh.groupby("created_date").size().reset_index(name="views")
+    fig1 = px.line(daily, x="created_date", y="views", markers=True)
+    st.plotly_chart(fig1, use_container_width=True)
+
+    # Top 10 Videos by Avg Duration
+    st.markdown("### ⏱️ Top 10 Videos by Average Duration")
+    top_avg = fwh.groupby("video_title")["duration_min"].mean().nlargest(10).reset_index()
     fig2 = px.bar(top_avg, x="duration_min", y="video_title", orientation="h",
                   labels={"duration_min": "Avg Duration (min)", "video_title": "Video"})
-    fig2.update_layout(height=420, yaxis={'categoryorder': 'total ascending'})
+    fig2.update_layout(yaxis={'categoryorder': 'total ascending'})
     st.plotly_chart(fig2, use_container_width=True)
-else:
-    st.info("No duration data available for this selection.")
 
-# 3) Viewing duration distribution
-st.markdown("### 🎬 Viewing Duration Distribution")
-if "duration_min" in fwh.columns and not fwh["duration_min"].dropna().empty:
-    fig3 = px.histogram(fwh, x="duration_min", nbins=30, labels={"duration_min": "Watch Duration (min)"})
-    fig3.update_layout(height=380, yaxis_title="Count")
+    # Viewing Duration Distribution
+    st.markdown("### 🎬 Viewing Duration Distribution")
+    fig3 = px.histogram(fwh, x="duration_min", nbins=25)
     st.plotly_chart(fig3, use_container_width=True)
-else:
-    st.info("No duration data available for this selection.")
 
-# 4) Year-over-year comparison (2022/2023 vs 2023/2024) with variance
-st.markdown("### 🔄 Video Counts by Academic Year (YOY with Variance)")
-# Prepare counts long-form: one row per video per acad_year
-vc_long = vc[["video_id", "video_title", "acad_year", "view_count"]].copy()
-# Filter only the two academic years if present
-target_years = ["2022/2023", "2023/2024"]
-vc_long = vc_long[vc_long["acad_year"].isin(target_years)]
-
-if not vc_long.empty:
-    # Overall totals per academic year
-    totals = vc_long.groupby("acad_year")["view_count"].sum().reindex(target_years).reset_index()
-    # Compute variance % if both years present
-    var_txt = ""
-    if set(target_years).issubset(set(totals["acad_year"].tolist())) and len(totals) == 2:
-        base = totals.loc[totals["acad_year"] == "2022/2023", "view_count"].values
-        new  = totals.loc[totals["acad_year"] == "2023/2024", "view_count"].values
-        if len(base) and len(new) and base[0] != 0:
-            var_pct = ((new[0] - base[0]) / base[0]) * 100.0
-            sign = "▲" if var_pct >= 0 else "▼"
-            var_txt = f"  ({sign} {var_pct:.1f}% vs 2022/2023)"
-    fig4 = px.bar(totals, x="acad_year", y="view_count",
-                  text="view_count", labels={"acad_year":"Academic Year", "view_count":"Total Views"},
-                  title=f"Total Views by Academic Year{var_txt}")
-    fig4.update_traces(texttemplate='%{text:,}', textposition='outside')
-    fig4.update_layout(height=420, uniformtext_minsize=10, uniformtext_mode='hide')
+# --------------------------- YEARLY COMPARISON ---------------------------
+st.markdown("### 🔄 Video Counts by Academic Year (2022/2023 vs 2023/2024)")
+vc = counts[counts["acad_year"].isin(["2022/2023", "2023/2024"])]
+if not vc.empty:
+    total = vc.groupby("acad_year")["view_count"].sum().reset_index()
+    fig4 = px.bar(total, x="acad_year", y="view_count", text="view_count")
     st.plotly_chart(fig4, use_container_width=True)
-else:
-    st.info("Video Counts file does not contain 2022/2023 or 2023/2024.")
 
-# 5) Repeat users (how many different videos each user watched)
+# --------------------------- REPEAT USERS ---------------------------
 st.markdown("### 👥 Repeat Users — Videos Watched per User")
-viewer_col = "user_id"
-if viewer_col in fwh.columns and not fwh.empty:
-    per_user = fwh.groupby(viewer_col)["video_id"].nunique().reset_index(name="videos_watched")
-    dist = per_user["videos_watched"].value_counts().sort_index().reset_index()
-    dist.columns = ["Videos Watched", "User Count"]
-    fig5 = px.bar(dist, x="Videos Watched", y="User Count", title="")
-    fig5.update_layout(height=380)
+if "user_id" in fwh.columns:
+    per_user = fwh.groupby("user_id")["video_id"].nunique().value_counts().reset_index()
+    per_user.columns = ["Videos Watched", "User Count"]
+    fig5 = px.bar(per_user, x="Videos Watched", y="User Count")
     st.plotly_chart(fig5, use_container_width=True)
 else:
-    st.info("No viewer IDs available for repeat-user analysis.")
+    st.info("No User ID data to show repeat users.")
 
 # --------------------------- DOWNLOAD ---------------------------
-st.markdown("---")
 st.download_button(
-    "📥 Download Filtered Watch History (CSV)",
+    "📥 Download Filtered Data",
     fwh.to_csv(index=False).encode("utf-8"),
-    "freefuse_filtered_watch_history.csv",
+    "filtered_watch_history.csv",
     "text/csv"
 )
 
