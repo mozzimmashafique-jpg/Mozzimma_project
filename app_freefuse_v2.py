@@ -71,24 +71,41 @@ except Exception as e:
     st.stop()
 
 # ---------------------------  CLEAN WATCH HISTORY  ---------------------------
-if "date" not in watch.columns:
-    date_col = [c for c in watch.columns if "date" in c.lower()]
-    if date_col:
-        watch["date"] = pd.to_datetime(watch[date_col[0]], errors="coerce")
-if "time" in watch.columns:
-    watch["ts"] = ensure_datetime(watch["date"], watch["time"])
-else:
-    watch["ts"] = pd.to_datetime(watch["date"], errors="coerce")
 
-watch["month"] = pd.to_datetime(watch["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+# Make sure we really have a DataFrame
+if not isinstance(watch, pd.DataFrame):
+    st.error("❌ The Watch History file could not be read as a table.")
+    st.stop()
+
+# Normalize column names for flexible matching
+watch.columns = [c.strip().lower().replace(" ", "_") for c in watch.columns]
+
+# Auto-detect possible date/time and duration columns
+date_cols = [c for c in watch.columns if "date" in c or "day" in c or "timestamp" in c]
+time_cols = [c for c in watch.columns if "time" in c or "hour" in c]
+dur_cols = [c for c in watch.columns if "duration" in c or "watch" in c or "length" in c]
+
+# Create datetime and derived columns
+if date_cols:
+    date_col = date_cols[0]
+    if time_cols:
+        watch["ts"] = ensure_datetime(watch[date_col], watch[time_cols[0]])
+    else:
+        watch["ts"] = pd.to_datetime(watch[date_col], errors="coerce")
+else:
+    # No date column found
+    st.error("⚠️ No date-like column found in your Watch History file.")
+    st.stop()
+
+watch["date"] = pd.to_datetime(watch["ts"], errors="coerce").dt.date
+watch["month"] = pd.to_datetime(watch["ts"], errors="coerce").dt.to_period("M").dt.to_timestamp()
 watch["hour"] = pd.to_datetime(watch["ts"], errors="coerce").dt.hour
 watch["am_pm"] = watch["hour"].apply(am_pm_from_hour)
 watch["dow"] = pd.to_datetime(watch["ts"], errors="coerce").dt.day_name()
 
-if "duration" in watch.columns:
-    watch["duration_min"] = normalize_minutes(watch["duration"])
-elif "viewing_duration" in watch.columns:
-    watch["duration_min"] = normalize_minutes(watch["viewing_duration"])
+# Convert durations to minutes
+if dur_cols:
+    watch["duration_min"] = normalize_minutes(watch[dur_cols[0]])
 else:
     watch["duration_min"] = np.nan
 
