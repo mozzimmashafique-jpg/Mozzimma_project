@@ -12,6 +12,7 @@ st.markdown("""
   h1, h2, h3 { color:#2b1b6b; }
   [data-testid="stSidebar"] { background:#f4f2ff; }
   .metric-card { background:#f7f5ff; padding:12px; border-radius:12px; text-align:center; }
+  .stPlotlyChart { padding-bottom: 25px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -21,14 +22,14 @@ st.title("🎥 FreeFuse Interactive Engagement Dashboard")
 WATCH_HISTORY_FILE = "Main Nodes Watch History 2022-2024 School Year.xlsx"
 VIDEO_COUNTS_FILE = "Video Counts 2022-2024.xlsx"
 
-# --------------------------- HELPER FUNCTIONS ---------------------------
+# --------------------------- HELPERS ---------------------------
 def normalize_cols(df):
     df.columns = df.columns.str.strip().str.lower().str.replace(r"[\s_]+", " ", regex=True)
     return df
 
 def to_minutes(series):
     s = pd.to_numeric(series, errors="coerce")
-    if s.dropna().median() > 200:  # convert seconds to minutes
+    if s.dropna().median() > 200:
         s = s / 60.0
     return s
 
@@ -100,7 +101,7 @@ with st.sidebar.expander("🎞️ Select Video Title(s)", expanded=False):
 # Time of Day
 ampm_choice = st.sidebar.selectbox("Time of Day", ["Both", "AM", "PM"], index=0)
 
-# --------------------------- APPLY FILTERS ---------------------------
+# --------------------------- FILTER DATA ---------------------------
 fwh = watch.copy()
 if "year" in fwh.columns:
     fwh = fwh[fwh["year"] == selected_year]
@@ -109,7 +110,7 @@ if selected_titles:
 if ampm_choice != "Both" and "am_pm" in fwh.columns:
     fwh = fwh[fwh["am_pm"] == ampm_choice]
 
-# --------------------------- KPIs ---------------------------
+# --------------------------- KPI CARDS ---------------------------
 st.subheader("📌 Key Metrics")
 c1, c2, c3, c4, c5 = st.columns(5)
 
@@ -136,12 +137,12 @@ for c, (label, value) in zip(
 
 st.markdown("---")
 
-# --------------------------- VISUALS ---------------------------
+# --------------------------- VISUALIZATIONS ---------------------------
 st.markdown("## 📊 Engagement Insights")
 
 if not fwh.empty and "created_date" in fwh.columns:
 
-    # 1️⃣ Engagement Trend Over Time — LINE + AREA
+    # 1️⃣ Line + Area Chart
     st.markdown("### 📈 Engagement Trend Over Time")
     daily = fwh.groupby("created_date").size().reset_index(name="views")
     fig1 = px.area(
@@ -154,7 +155,7 @@ if not fwh.empty and "created_date" in fwh.columns:
     fig1.update_layout(xaxis_title="Date", yaxis_title="Views", height=380)
     st.plotly_chart(fig1, use_container_width=True)
 
-    # 2️⃣ Top 10 Videos by Avg Duration — LOLLIPOP
+    # 2️⃣ Lollipop Chart
     st.markdown("### ⏱️ Top 10 Videos by Average Duration Watched")
     if "video_title" in fwh.columns:
         top_avg = fwh.groupby("video_title")["duration_min"].mean().nlargest(10).reset_index()
@@ -170,7 +171,7 @@ if not fwh.empty and "created_date" in fwh.columns:
                            yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig2, use_container_width=True)
 
-    # 3️⃣ Viewing Duration Distribution — VIOLIN PLOT
+    # 3️⃣ Violin Plot
     st.markdown("### 🎬 Viewing Duration Distribution")
     fig3 = px.violin(
         fwh, y="duration_min", box=True, points="all",
@@ -180,20 +181,40 @@ if not fwh.empty and "created_date" in fwh.columns:
     fig3.update_layout(height=420, yaxis_title="Watch Duration (min)")
     st.plotly_chart(fig3, use_container_width=True)
 
-# 4️⃣ Yearly Comparison — GROUPED BAR
-st.markdown("### 📊 Videos Watched by Academic Year")
+# 4️⃣ Horizontal Top-20 Comparison
+st.markdown("### 📊 Top 20 Videos Watched by Academic Year")
 if "acad_year" in counts.columns:
     vc = counts[counts["acad_year"].isin(["2022/2023", "2023/2024"])]
     if not vc.empty:
+        top_videos = (
+            vc.groupby(["video_title", "acad_year"])["view_count"]
+            .sum()
+            .reset_index()
+        )
+        top_videos["total_views"] = top_videos.groupby("video_title")["view_count"].transform("sum")
+        top_videos = top_videos.sort_values("total_views", ascending=False).head(40)
+
         fig4 = px.bar(
-            vc, x="video_title", y="view_count", color="acad_year",
-            barmode="group", title="View Count Comparison by Year",
+            top_videos,
+            x="view_count",
+            y="video_title",
+            color="acad_year",
+            barmode="group",
+            orientation="h",
+            title="Top 20 Most Watched Videos by Academic Year",
             color_discrete_sequence=["#9370DB", "#BA55D3"]
         )
-        fig4.update_layout(xaxis_title="Video Title", yaxis_title="Views", height=420)
+        fig4.update_layout(
+            height=750,
+            xaxis_title="Views",
+            yaxis_title="Video Title",
+            yaxis={'categoryorder': 'total ascending'},
+            bargap=0.25,
+            legend_title="Academic Year"
+        )
         st.plotly_chart(fig4, use_container_width=True)
 
-# 5️⃣ Repeat Users — BUBBLE SCATTER
+# 5️⃣ Bubble Scatter
 st.markdown("### 👥 Repeat Users — Videos Watched per User")
 if "user_id" in fwh.columns:
     per_user = fwh.groupby("user_id")["video_id"].nunique().value_counts().reset_index()
