@@ -1,3 +1,6 @@
+# ==========================================================
+# FreeFuse Engagement Dashboard (Final Color-Coded Version)
+# ==========================================================
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -34,7 +37,7 @@ def load_and_clean_data(file_path):
     }
     df.rename(columns=rename_map, inplace=True)
 
-    # Try to locate View_Date and View_Time columns
+    # Try to locate View_Date and View_Time columns dynamically
     if "View_Date" not in df.columns:
         possible_date_cols = [c for c in df.columns if "date" in c.lower()]
         if possible_date_cols:
@@ -65,7 +68,7 @@ def load_and_clean_data(file_path):
     # Convert duration to minutes
     df["Duration_Min"] = pd.to_numeric(df["Duration"], errors="coerce") / 60
 
-    # Normalize Done_Viewing
+    # Normalize Done_Viewing column
     df["Done_Viewing"] = df["Done_Viewing"].astype(str).str.strip().str.lower()
     df["Done_Viewing"] = df["Done_Viewing"].replace(
         {"1": True, "true": True, "yes": True, "0": False, "false": False, "no": False}
@@ -132,7 +135,12 @@ kpi4.metric("✅ Completion Rate", f"{completion_rate}%")
 
 # 1️⃣ Views Over Time
 views_by_date = f.groupby("Date").size().reset_index(name="Views")
-fig1 = px.line(views_by_date, x="Date", y="Views", title="Views Over Time", markers=True)
+fig1 = px.line(
+    views_by_date, x="Date", y="Views",
+    title="📈 Views Over Time",
+    markers=True,
+    color_discrete_sequence=["#3E8EDE"]
+)
 st.plotly_chart(fig1, use_container_width=True)
 
 # 2️⃣ Engagement Heatmap (Day x Hour)
@@ -140,14 +148,18 @@ f["Day"] = f["View_Timestamp"].dt.day_name()
 heatmap_data = f.groupby(["Day", "Hour"]).size().reset_index(name="Views")
 fig2 = px.density_heatmap(
     heatmap_data, x="Hour", y="Day", z="Views",
-    title="Engagement Heatmap (Day × Hour)",
-    color_continuous_scale="Purples"
+    title="🔥 Engagement Heatmap (Day × Hour)",
+    color_continuous_scale="Oranges"
 )
 st.plotly_chart(fig2, use_container_width=True)
 
 # 3️⃣ Hourly Viewership Trend
 hourly_views = f.groupby("Hour").size().reset_index(name="Views")
-fig3 = px.line(hourly_views, x="Hour", y="Views", markers=True, title="Hourly Viewership Trend")
+fig3 = px.area(
+    hourly_views, x="Hour", y="Views",
+    title="🕓 Hourly Viewership Trend",
+    color_discrete_sequence=["#6A5ACD"]
+)
 st.plotly_chart(fig3, use_container_width=True)
 
 # 4️⃣ Top 10 Videos by Total Views (Completion Rate as Color)
@@ -168,7 +180,7 @@ fig4 = px.bar(
     y="Total_Views",
     color="Completion_Rate",
     color_continuous_scale="Greens",
-    title="Top 10 Videos by Total Views (Completion Rate as Color)",
+    title="🏆 Top 10 Videos by Total Views (Completion Rate as Color)",
     text="Total_Views"
 )
 fig4.update_traces(texttemplate="%{text} views", textposition="outside")
@@ -189,9 +201,9 @@ fig5 = px.bar(
     x="Filled_Questionnaire",
     y="Viewer_Count",
     color="Filled_Questionnaire",
-    title="Viewers Who Filled Out Questionnaire vs Did Not",
+    title="🧮 Viewers Who Filled Out Questionnaire vs Did Not",
     text="Viewer_Count",
-    color_discrete_map={True: "#3E9E5D", False: "#B0B0B0"}
+    color_discrete_map={True: "#5CB85C", False: "#FF6F61"}
 )
 fig5.update_traces(texttemplate="%{text}", textposition="outside")
 fig5.update_layout(xaxis_title="Questionnaire Completion", yaxis_title="Number of Viewers")
