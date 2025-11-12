@@ -63,29 +63,35 @@ def fmt_int(n):
 
 # ---------------------------  LOAD DATA  ---------------------------
 try:
-    watch = read_xlsx(WATCH_HISTORY_FILE)
+    # Auto-detect the first non-empty sheet in Watch History file
+    excel_file = pd.ExcelFile(WATCH_HISTORY_FILE)
+    st.write("📘 Sheets found in Watch History:", excel_file.sheet_names)
+
+    watch = None
+    for name in excel_file.sheet_names:
+        temp = pd.read_excel(excel_file, sheet_name=name)
+        if not temp.empty:
+            watch = temp
+            st.write(f"✅ Loaded Watch History sheet: {name}")
+            break
+
+    if watch is None:
+        st.error("⚠️ No data found in any sheet of the Watch History file.")
+        st.stop()
+
     counts = read_xlsx(VIDEO_COUNTS_FILE)
     pc = read_xlsx(PARENT_CHILD_FILE)
+
 except Exception as e:
     st.error(f"❌ Could not load files: {e}")
     st.stop()
 
 # ---------------------------  CLEAN WATCH HISTORY  ---------------------------
-
-# Make sure we really have a DataFrame
-if not isinstance(watch, pd.DataFrame):
-    st.error("❌ The Watch History file could not be read as a table.")
-    st.stop()
-
-# Normalize column names for flexible matching
 watch.columns = [c.strip().lower().replace(" ", "_") for c in watch.columns]
-
-# Auto-detect possible date/time and duration columns
 date_cols = [c for c in watch.columns if "date" in c or "day" in c or "timestamp" in c]
 time_cols = [c for c in watch.columns if "time" in c or "hour" in c]
 dur_cols = [c for c in watch.columns if "duration" in c or "watch" in c or "length" in c]
 
-# Create datetime and derived columns
 if date_cols:
     date_col = date_cols[0]
     if time_cols:
@@ -93,8 +99,7 @@ if date_cols:
     else:
         watch["ts"] = pd.to_datetime(watch[date_col], errors="coerce")
 else:
-    # No date column found
-    st.error("⚠️ No date-like column found in your Watch History file.")
+    st.error("⚠️ No date column found in your Watch History file.")
     st.stop()
 
 watch["date"] = pd.to_datetime(watch["ts"], errors="coerce").dt.date
@@ -103,7 +108,6 @@ watch["hour"] = pd.to_datetime(watch["ts"], errors="coerce").dt.hour
 watch["am_pm"] = watch["hour"].apply(am_pm_from_hour)
 watch["dow"] = pd.to_datetime(watch["ts"], errors="coerce").dt.day_name()
 
-# Convert durations to minutes
 if dur_cols:
     watch["duration_min"] = normalize_minutes(watch[dur_cols[0]])
 else:
