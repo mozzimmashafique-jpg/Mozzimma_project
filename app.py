@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import re
+import unicodedata
 
 # --------------------- Page config & style ---------------------
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", layout="wide")
@@ -40,14 +41,31 @@ def pick_col(df: pd.DataFrame, want: str, candidates: list[str]) -> str | None:
         if any(t in nc for t in target_norms): return c
     return None
 
+# --------------------- Enhanced Title Cleaning ---------------------
 def clean_title_series(s: pd.Series) -> pd.Series:
     """
-    Keep titles that contain at least one letter or digit after stripping spaces.
-    Preserve accents & punctuation. Drop rows that are blank or symbol-only.
+    Clean and normalize video titles:
+    - Remove garbled or symbol-only titles
+    - Strip extra spaces and repeated punctuation
+    - Normalize unicode text (fix corrupted encoding)
+    - Keep only rows with at least one letter or digit
     """
     s = s.astype(str).str.strip()
-    # keep rows where removing all non-alphanumeric left at least 1 char
-    keep_mask = s.str.replace(r'[^0-9A-Za-z]+', '', regex=True).str.len() > 0
+
+    # Normalize Unicode (fix encoding issues like 'M��dulo' -> 'Módulo')
+    s = s.apply(lambda x: unicodedata.normalize('NFKC', x))
+
+    # Remove excessive punctuation and symbol repetition
+    s = s.str.replace(r'([^\w\s])\1+', r'\1', regex=True)  # collapse repeated symbols
+    s = s.str.replace(r'[_\-=~`^]+', ' ', regex=True)      # replace symbol lines with space
+    s = s.str.replace(r'\s+', ' ', regex=True).str.strip() # normalize spaces
+
+    # Remove emoji / non-printable characters
+    s = s.str.replace(r'[^\x00-\x7F]+', '', regex=True)
+
+    # Keep only titles that still have some alphanumeric content
+    keep_mask = s.str.replace(r'[^A-Za-z0-9]+', '', regex=True).str.len() > 0
+
     return s.where(keep_mask)
 
 # --------------------- Load & clean ---------------------
@@ -116,7 +134,7 @@ def load_and_clean(path: str) -> tuple[pd.DataFrame, dict]:
     work["Viewer"] = df[colmap["viewer"]] if colmap["viewer"] else pd.NA
     work["Owner"]  = df[colmap["owner"]]  if colmap["owner"]  else pd.NA
 
-    # Final cleaning: drop obviously unusable rows
+    # Final cleaning: drop unusable rows
     work = work.dropna(subset=["Video_Name", "View_DateOnly"]).copy()
     if "Viewing_Duration_Min" in work:
         work = work[pd.to_numeric(work["Viewing_Duration_Min"], errors="coerce") > 0]
@@ -149,7 +167,6 @@ if df["View_DateOnly"].notna().any():
     min_date = min(df["View_DateOnly"])
     max_date = max(df["View_DateOnly"])
 else:
-    # fallback guard
     min_date = pd.to_datetime("2024-01-01").date()
     max_date = pd.to_datetime("2024-12-31").date()
 date_input = st.sidebar.date_input("📅 Select Date Range", [min_date, max_date])
@@ -164,7 +181,6 @@ if comp_filter == "Completed":
 elif comp_filter == "Not Completed":
     f = f[f["Done_Viewing"] == False]
 
-# single vs range safe handling
 if isinstance(date_input, list) and len(date_input) == 2:
     start, end = date_input
 elif isinstance(date_input, list) and len(date_input) == 1:
