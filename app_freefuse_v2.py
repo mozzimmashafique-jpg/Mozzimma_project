@@ -8,6 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", page_icon="🎬", layout="wide")
 st.markdown(\"\"\"
+st.markdown("""
 <style>
   :root { --accent:#6A5ACD; --accent2:#9370DB; --bg:#f7f5ff; }
   [data-testid="stSidebar"] { background-color: var(--bg); }
@@ -17,7 +18,7 @@ st.markdown(\"\"\"
   .kpi .label { color:#4b4b4b; font-size:0.85rem; }
   .kpi .value { font-size:1.6rem; font-weight:700; color:#2b1b6b; }
 </style>
-\"\"\", unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 st.title(\"🎥 FreeFuse Interactive Engagement Dashboard\")
 
