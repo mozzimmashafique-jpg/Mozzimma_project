@@ -21,7 +21,7 @@ st.title("🎥 FreeFuse Interactive Engagement Dashboard")
 WATCH_HISTORY_FILE = "Main Nodes Watch History 2022-2024 School Year.xlsx"
 VIDEO_COUNTS_FILE = "Video Counts 2022-2024.xlsx"
 
-# --------------------------- HELPERS ---------------------------
+# --------------------------- HELPER FUNCTIONS ---------------------------
 def normalize_cols(df):
     df.columns = df.columns.str.strip().str.lower().str.replace(r"[\s_]+", " ", regex=True)
     return df
@@ -52,7 +52,7 @@ except Exception as e:
     st.error(f"❌ Error loading files: {e}")
     st.stop()
 
-# --------------------------- CLEAN / RENAME ---------------------------
+# --------------------------- RENAME COLUMNS ---------------------------
 watch.rename(columns={
     "video id": "video_id",
     "node title": "video_title",
@@ -79,19 +79,28 @@ watch["month"] = watch["created_date"].dt.to_period("M").dt.to_timestamp()
 # --------------------------- SIDEBAR FILTERS ---------------------------
 st.sidebar.header("📊 Filters")
 
+# Year
 years = sorted(watch["year"].dropna().unique())
 selected_year = st.sidebar.selectbox("Select Year", years, index=len(years)-1 if years else 0)
 
+# Video Title dropdown (with Select All)
 titles = sorted(watch["video_title"].dropna().unique()) if "video_title" in watch.columns else []
-selected_titles = st.sidebar.multiselect(
-    "Select Video Title(s)",
-    options=titles,
-    default=titles if len(titles) <= 10 else titles[:10]
-)
+with st.sidebar.expander("🎞️ Select Video Title(s)", expanded=False):
+    select_all = st.checkbox("Select All Videos", value=True)
+    if select_all:
+        selected_titles = titles
+    else:
+        selected_titles = st.multiselect(
+            "Choose from list:",
+            options=titles,
+            default=[],
+            placeholder="Select one or multiple videos..."
+        )
 
+# Time of Day
 ampm_choice = st.sidebar.selectbox("Time of Day", ["Both", "AM", "PM"], index=0)
 
-# --------------------------- FILTER DATA ---------------------------
+# --------------------------- APPLY FILTERS ---------------------------
 fwh = watch.copy()
 if "year" in fwh.columns:
     fwh = fwh[fwh["year"] == selected_year]
@@ -131,7 +140,8 @@ st.markdown("---")
 st.markdown("## 📊 Engagement Insights")
 
 if not fwh.empty and "created_date" in fwh.columns:
-    # 1️⃣ Line + Area Chart
+
+    # 1️⃣ Engagement Trend Over Time — LINE + AREA
     st.markdown("### 📈 Engagement Trend Over Time")
     daily = fwh.groupby("created_date").size().reset_index(name="views")
     fig1 = px.area(
@@ -144,7 +154,7 @@ if not fwh.empty and "created_date" in fwh.columns:
     fig1.update_layout(xaxis_title="Date", yaxis_title="Views", height=380)
     st.plotly_chart(fig1, use_container_width=True)
 
-    # 2️⃣ Lollipop Chart
+    # 2️⃣ Top 10 Videos by Avg Duration — LOLLIPOP
     st.markdown("### ⏱️ Top 10 Videos by Average Duration Watched")
     if "video_title" in fwh.columns:
         top_avg = fwh.groupby("video_title")["duration_min"].mean().nlargest(10).reset_index()
@@ -160,33 +170,30 @@ if not fwh.empty and "created_date" in fwh.columns:
                            yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig2, use_container_width=True)
 
-    # 3️⃣ Box Plot
+    # 3️⃣ Viewing Duration Distribution — VIOLIN PLOT
     st.markdown("### 🎬 Viewing Duration Distribution")
-    fig3 = px.box(
-        fwh, y="duration_min",
+    fig3 = px.violin(
+        fwh, y="duration_min", box=True, points="all",
         color_discrete_sequence=["#8A2BE2"],
-        points="all",
         title="Distribution of Viewing Durations"
     )
     fig3.update_layout(height=420, yaxis_title="Watch Duration (min)")
     st.plotly_chart(fig3, use_container_width=True)
 
-# 4️⃣ Donut Pie Chart
-st.markdown("### 🔄 Video Counts by Academic Year (2022/2023 vs 2023/2024)")
+# 4️⃣ Yearly Comparison — GROUPED BAR
+st.markdown("### 📊 Videos Watched by Academic Year")
 if "acad_year" in counts.columns:
     vc = counts[counts["acad_year"].isin(["2022/2023", "2023/2024"])]
     if not vc.empty:
-        total = vc.groupby("acad_year")["view_count"].sum().reset_index()
-        fig4 = px.pie(
-            total, names="acad_year", values="view_count",
-            hole=0.5, color_discrete_sequence=["#9370DB", "#BA55D3"],
-            title="Share of Total Views by Academic Year"
+        fig4 = px.bar(
+            vc, x="video_title", y="view_count", color="acad_year",
+            barmode="group", title="View Count Comparison by Year",
+            color_discrete_sequence=["#9370DB", "#BA55D3"]
         )
-        fig4.update_traces(textinfo="percent+label", pull=[0.05, 0])
-        fig4.update_layout(height=420)
+        fig4.update_layout(xaxis_title="Video Title", yaxis_title="Views", height=420)
         st.plotly_chart(fig4, use_container_width=True)
 
-# 5️⃣ Bubble Chart
+# 5️⃣ Repeat Users — BUBBLE SCATTER
 st.markdown("### 👥 Repeat Users — Videos Watched per User")
 if "user_id" in fwh.columns:
     per_user = fwh.groupby("user_id")["video_id"].nunique().value_counts().reset_index()
@@ -210,3 +217,4 @@ st.download_button(
     "filtered_watch_history.csv",
     "text/csv"
 )
+
