@@ -3,42 +3,23 @@ import numpy as np
 import plotly.express as px
 import streamlit as st
 
-# ---------------------------  PAGE SETUP  ---------------------------
+# --------------------------- PAGE SETUP ---------------------------
 st.set_page_config(page_title="FreeFuse Engagement Dashboard", page_icon="🎥", layout="wide")
 
 st.markdown("""
 <style>
     h1, h2, h3 { color: #2b1b6b; }
     .metric-card { background-color: #f7f5ff; padding: 12px; border-radius: 10px; text-align: center; }
+    [data-testid="stSidebar"] { background-color: #f4f2ff; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🎥 FreeFuse Interactive Engagement Dashboard")
 
-# ---------------------------  DATA FILES  ---------------------------
+# --------------------------- LOAD DATA ---------------------------
 WATCH_HISTORY_FILE = "Main Nodes Watch History 2022-2024 School Year.xlsx"
 VIDEO_COUNTS_FILE = "Video Counts 2022-2024.xlsx"
 
-# ---------------------------  HELPER FUNCTIONS  ---------------------------
-def normalize_minutes(series: pd.Series) -> pd.Series:
-    s = pd.to_numeric(series, errors="coerce")
-    if s.dropna().median() > 200:
-        s = s / 60.0
-    return s
-
-def ensure_datetime(date_col: pd.Series, time_col: pd.Series = None) -> pd.Series:
-    if time_col is not None:
-        return pd.to_datetime(date_col.astype(str) + " " + time_col.astype(str), errors="coerce")
-    return pd.to_datetime(date_col, errors="coerce")
-
-def am_pm_from_hour(h: int) -> str:
-    try:
-        h = int(h)
-    except Exception:
-        return "Unknown"
-    return "AM" if 0 <= h < 12 else "PM"
-
-# ---------------------------  LOAD DATA  ---------------------------
 try:
     excel_file = pd.ExcelFile(WATCH_HISTORY_FILE)
     watch = None
@@ -53,57 +34,62 @@ except Exception as e:
     st.error(f"❌ Could not load files: {e}")
     st.stop()
 
-# ---------------------------  CLEAN WATCH HISTORY  ---------------------------
+# --------------------------- CLEAN DATA ---------------------------
 watch.columns = [c.strip().lower().replace(" ", "_") for c in watch.columns]
 counts.columns = [c.strip().lower().replace(" ", "_") for c in counts.columns]
 
-# Detect key columns
+# Identify columns
 date_cols = [c for c in watch.columns if "date" in c or "timestamp" in c]
 time_cols = [c for c in watch.columns if "time" in c or "hour" in c]
 dur_cols = [c for c in watch.columns if "duration" in c]
 vid_col = [c for c in watch.columns if "video" in c][0]
+title_col = [c for c in watch.columns if "title" in c or "name" in c or "video" in c][-1]
 
-# Create datetime and derived cols
+# Convert datetime
 if date_cols:
     date_col = date_cols[0]
     if time_cols:
-        watch["ts"] = ensure_datetime(watch[date_col], watch[time_cols[0]])
+        watch["ts"] = pd.to_datetime(watch[date_col].astype(str) + " " + watch[time_cols[0]].astype(str), errors="coerce")
     else:
         watch["ts"] = pd.to_datetime(watch[date_col], errors="coerce")
 else:
-    st.error("⚠️ No date column found.")
+    st.error("⚠️ No date column found in Watch History.")
     st.stop()
 
 watch["date"] = pd.to_datetime(watch["ts"], errors="coerce")
 watch["month"] = watch["date"].dt.to_period("M").dt.to_timestamp()
 watch["year"] = watch["date"].dt.year
 watch["hour"] = watch["date"].dt.hour
-watch["am_pm"] = watch["hour"].apply(am_pm_from_hour)
-watch["duration_min"] = normalize_minutes(watch[dur_cols[0]]) if dur_cols else np.nan
+watch["am_pm"] = np.where(watch["hour"] < 12, "AM", "PM")
 
-# ---------------------------  FILTERS  ---------------------------
+# Normalize duration
+if dur_cols:
+    dur_col = dur_cols[0]
+    watch["duration_min"] = pd.to_numeric(watch[dur_col], errors="coerce")
+    watch["duration_min"] = np.where(watch["duration_min"] > 200, watch["duration_min"]/60, watch["duration_min"])
+else:
+    watch["duration_min"] = np.nan
+
+# --------------------------- SIDEBAR FILTERS ---------------------------
 st.sidebar.header("📊 Filters")
 
-# Year filter
+# Dropdown filters
 years = sorted(watch["year"].dropna().unique().tolist())
-selected_years = st.sidebar.multiselect("Select Year(s)", years, default=years)
+selected_year = st.sidebar.selectbox("Select Year", options=years, index=len(years)-1)
 
-# Video filter
-videos = sorted(watch[vid_col].dropna().unique().tolist())
-selected_videos = st.sidebar.multiselect("Select Video(s)", videos, default=videos[:10] if len(videos) > 10 else videos)
+videos = sorted(watch[title_col].dropna().unique().tolist())
+selected_video = st.sidebar.selectbox("Select Video Title", options=["All"] + videos)
 
-# Time filter
-ampm_filter = st.sidebar.radio("Time of Day", ["Both", "AM", "PM"], index=0, horizontal=True)
+ampm_filter = st.sidebar.selectbox("Time of Day", ["Both", "AM", "PM"])
 
-filtered = watch[
-    watch["year"].isin(selected_years) &
-    watch[vid_col].isin(selected_videos)
-].copy()
-
+# Apply filters
+filtered = watch[watch["year"] == selected_year].copy()
+if selected_video != "All":
+    filtered = filtered[filtered[title_col] == selected_video]
 if ampm_filter != "Both":
     filtered = filtered[filtered["am_pm"] == ampm_filter]
 
-# ---------------------------  KPIs  ---------------------------
+# --------------------------- KPI CARDS ---------------------------
 st.subheader("📌 Key Metrics")
 
 col1, col2, col3, col4 = st.columns(4)
@@ -123,70 +109,77 @@ with col4:
 
 st.markdown("---")
 
-# ---------------------------  VISUALS  ---------------------------
-st.subheader("📈 Engagement Insights")
+# --------------------------- VISUALIZATIONS ---------------------------
 
-# 1️⃣ ENGAGEMENT TREND
-trend_col, duration_col = st.columns([1.2, 1])
-with trend_col:
-    st.markdown("### 📊 Engagement Trend Over Time")
-    trend = filtered.groupby("date").size().reset_index(name="views")
-    if not trend.empty:
-        fig1 = px.line(trend, x="date", y="views", markers=True,
-                       title="", color_discrete_sequence=["#6A5ACD"])
-        fig1.update_layout(yaxis_title="Views", xaxis_title="", height=400)
-        st.plotly_chart(fig1, use_container_width=True)
-    else:
-        st.info("No trend data available for selection.")
+# 1️⃣ Engagement Trend
+st.markdown("### 📊 Engagement Trend Over Time")
+trend = filtered.groupby("date").size().reset_index(name="views")
+if not trend.empty:
+    fig1 = px.line(trend, x="date", y="views", markers=True,
+                   color_discrete_sequence=["#6A5ACD"])
+    fig1.update_layout(yaxis_title="Views", xaxis_title="", height=400)
+    st.plotly_chart(fig1, use_container_width=True)
+else:
+    st.info("No data for selected filters.")
 
-# 2️⃣ TOP VIDEOS BY AVG DURATION
-with duration_col:
-    st.markdown("### ⏱️ Top 10 Videos by Avg Duration")
-    if "duration_min" in filtered:
-        top_avg = (
-            filtered.groupby(vid_col)["duration_min"]
-            .mean()
-            .reset_index()
-            .sort_values("duration_min", ascending=False)
-            .head(10)
-        )
-        fig2 = px.bar(top_avg, x="duration_min", y=vid_col, orientation="h",
-                      color="duration_min", color_continuous_scale="Purples",
-                      title="")
-        fig2.update_layout(xaxis_title="Avg Duration (min)", yaxis_title="", height=400)
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("No duration data available.")
+# 2️⃣ Top 10 Videos by Avg Duration
+st.markdown("### ⏱️ Top 10 Videos by Average Duration Watched")
+if "duration_min" in filtered:
+    top_avg = (
+        filtered.groupby(title_col)["duration_min"]
+        .mean()
+        .reset_index()
+        .sort_values("duration_min", ascending=False)
+        .head(10)
+    )
+    fig2 = px.bar(top_avg, x="duration_min", y=title_col, orientation="h",
+                  color="duration_min", color_continuous_scale="Purples",
+                  labels={"duration_min": "Avg Duration (min)", title_col: "Video"})
+    fig2.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+    st.plotly_chart(fig2, use_container_width=True)
+else:
+    st.info("No duration data available.")
 
-# 3️⃣ VIEWING DURATION DISTRIBUTION
+# 3️⃣ Viewing Duration Distribution
 st.markdown("### 🎬 Viewing Duration Distribution")
 if "duration_min" in filtered:
     fig3 = px.histogram(filtered, x="duration_min", nbins=30,
                         color_discrete_sequence=["#9370DB"],
-                        title="", labels={"duration_min": "Watch Duration (min)"})
+                        labels={"duration_min": "Watch Duration (min)"})
     fig3.update_layout(yaxis_title="Count", height=400)
     st.plotly_chart(fig3, use_container_width=True)
 else:
     st.info("No duration data available.")
 
-# 4️⃣ REPEAT USERS
-st.markdown("### 👥 Repeat Users (Videos Watched per User)")
+# 4️⃣ Video Count Comparison 2022/2023 vs 2023/2024
+st.markdown("### 🔄 Video Count Comparison by Academic Year")
+# Clean and prep counts data
+year_cols = [c for c in counts.columns if "2022" in c or "2023" in c or "2024" in c]
+vid_name = [c for c in counts.columns if "video" in c or "title" in c][0]
+if year_cols:
+    df_counts = counts[[vid_name] + year_cols].melt(id_vars=vid_name, var_name="Year", value_name="Views")
+    fig4 = px.bar(df_counts, x=vid_name, y="Views", color="Year",
+                  barmode="group", title="Videos Watched by Academic Year")
+    fig4.update_layout(xaxis_title="Video", yaxis_title="Views", height=500)
+    st.plotly_chart(fig4, use_container_width=True)
+else:
+    st.info("Year comparison columns not found in Video Counts dataset.")
+
+# 5️⃣ Repeat Users
+st.markdown("### 👥 Repeat Users — How Many Videos Each User Watched")
 viewer_cols = [c for c in filtered.columns if "user" in c or "viewer" in c or "id" in c]
 if viewer_cols:
     vcol = viewer_cols[0]
     repeats = filtered.groupby(vcol)[vid_col].nunique().reset_index(name="videos_watched")
     counts_repeat = repeats["videos_watched"].value_counts().reset_index()
     counts_repeat.columns = ["Videos Watched", "User Count"]
-
-    fig4 = px.bar(counts_repeat, x="Videos Watched", y="User Count",
-                  color="User Count", color_continuous_scale="Blues",
-                  title="")
-    fig4.update_layout(height=400)
-    st.plotly_chart(fig4, use_container_width=True)
+    fig5 = px.bar(counts_repeat, x="Videos Watched", y="User Count",
+                  color="User Count", color_continuous_scale="Blues")
+    st.plotly_chart(fig5, use_container_width=True)
 else:
-    st.info("No viewer/user ID column found in this dataset.")
+    st.info("No viewer/user ID column found in Watch History.")
 
-# ---------------------------  DOWNLOAD  ---------------------------
+# --------------------------- DOWNLOAD ---------------------------
 st.markdown("---")
 st.download_button("📥 Download Filtered Data (CSV)",
                    filtered.to_csv(index=False).encode("utf-8"),
