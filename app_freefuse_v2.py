@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 # --------------------------- PAGE CONFIG ---------------------------
-st.set_page_config(page_title="FreeFuse Interactive Dashboard", page_icon="🎥", layout="wide")
+st.set_page_config(page_title="FreeFuse Watch Activity & Engagement Overview", page_icon="🎥", layout="wide")
 
 st.markdown("""
 <style>
