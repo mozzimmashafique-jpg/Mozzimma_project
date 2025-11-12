@@ -16,7 +16,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎥 FreeFuse Interactive Engagement Dashboard")
+st.title("🎥 FreeFuse Watch Activity & Engagement Overview")
 
 # --------------------------- FILES ---------------------------
 WATCH_HISTORY_FILE = "Main Nodes Watch History 2022-2024 School Year.xlsx"
