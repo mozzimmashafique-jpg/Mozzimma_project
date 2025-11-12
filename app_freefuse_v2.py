@@ -1,13 +1,14 @@
 import math
 from typing import Optional, List
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="FreeFuse Engagement Dashboard", page_icon="🎬", layout="wide")
-st.markdown(\"\"\"
+st.set_page_config(page_title="FreeFuse Engagement Dashboard — v2", page_icon="📊", layout="wide")
+
 st.markdown("""
 <style>
   :root { --accent:#6A5ACD; --accent2:#9370DB; --bg:#f7f5ff; }
@@ -19,6 +20,7 @@ st.markdown("""
   .kpi .value { font-size:1.6rem; font-weight:700; color:#2b1b6b; }
 </style>
 """, unsafe_allow_html=True)
+
 
 st.title(\"🎥 FreeFuse Interactive Engagement Dashboard\")
 
