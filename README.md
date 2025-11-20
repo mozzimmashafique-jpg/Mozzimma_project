@@ -7,7 +7,7 @@ A dual-dashboard analytics suite for understanding watch behavior, engagement, a
 
 FreeFuse collects large amounts of watch-history, video engagement, and questionnaire activity data from multiple academic years. However, this data is stored across several raw Excel files with inconsistent column names, missing values, irregular timestamps, and unstructured formats.
 
-*Because of this, FreeFuse faces several challenges*:
+Because of this, FreeFuse faces several challenges:
 
 -Decision-makers cannot easily access a centralized view of platform engagement.
 -Video performance cannot be compared across time periods or academic years.
@@ -100,9 +100,9 @@ The project is organized with separate app files, a data directory, asset folder
 
 These dashboards allow FreeFuse to:
 
-Identify high-performing and low-performing content.
-Observe when users are most engaged throughout the day and week.
-Understand trends across academic years.
-Measure content completion, questionnaire engagement, and retention.
-Report insights clearly to internal teams, educators, and partner organizations.
-Make informed product, content, and operational decisions using real data.
+-Identify high-performing and low-performing content.
+-Observe when users are most engaged throughout the day and week.
+-Understand trends across academic years.
+-Measure content completion, questionnaire engagement, and retention.
+-Report insights clearly to internal teams, educators, and partner organizations.
+-Make informed product, content, and operational decisions using real data.
