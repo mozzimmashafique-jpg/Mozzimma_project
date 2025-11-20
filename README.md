@@ -10,11 +10,17 @@ FreeFuse collects large amounts of watch-history, video engagement, and question
 Because of this, FreeFuse faces several challenges:
 
 -Decision-makers cannot easily access a centralized view of platform engagement.
+
 -Video performance cannot be compared across time periods or academic years.
+
 -High-engagement and low-engagement content is difficult to identify.
+
 -Viewing behaviour patterns such as peak days, hours, or AM/PM trends are unclear.
+
 -Questionnaire participation and completion rates are not easily measurable.
+
 -Viewer-level insights such as repeat-user behaviour are not immediately visible.
+
 -Manual data cleaning and merging is time-consuming and prone to error.
 
 FreeFuse required an automated, interactive analytics solution that presents engagement trends clearly and allows non-technical users to explore insights intuitively.
@@ -28,19 +34,29 @@ This project provides two interactive Streamlit dashboards that clean, transform
 **1. Data Extraction and Preparation**
 
 -Load raw datasets from Excel files.
+
 -Normalize inconsistent and irregular column names.
+
 -Clean and validate timestamps, dates, and times.
+
 -Merge date and time into a single timestamp where necessary.
+
 -Convert duration fields into consistent minutes.
+
 -Clean video names and remove incomplete or invalid records.
+
 -Standardize completion values across multiple formats.
 
 **2. Build a Clean Analytical Dataset**
 
 -Extract year, month, hour, and day-of-week from timestamps.
+
 -Classify AM and PM values, even with inconsistent time formats.
+
 -Label repeat viewers and unique users.
+
 -Identify top-performing content by views and duration.
+
 -Remove empty or duplicated video records.
 
 **3. Create Interactive Filters**
@@ -48,11 +64,17 @@ This project provides two interactive Streamlit dashboards that clean, transform
 *Users can dynamically filter data by*:
 
 -Date range
+
 -Hour of day
+
 -AM or PM
+
 -Academic year
+
 -Video title
+
 -Completed vs not completed views
+
 -Questionnaire participation
 
 **4. Compute Core Engagement Metrics**
@@ -60,12 +82,19 @@ This project provides two interactive Streamlit dashboards that clean, transform
 *Each dashboard automatically calculates metrics such as*:
 
 -Total views
+
 -Unique viewers
+
 -Unique videos
+
 -Average watch duration
+
 -Total minutes watched
+
 -Completion rate
+
 -Most engaged video
+
 -Viewer-level questionnaire participation
 
 **5. Develop Interactive Visualizations**
@@ -73,10 +102,15 @@ This project provides two interactive Streamlit dashboards that clean, transform
 ***Dashboard 1 includes***:
 
 -Views over time
+
 -Day × hour heatmap
+
 -Hourly viewership trend
+
 -Top videos by total views
+
 -Completion-rate comparison
+
 -Questionnaire participation analysis
 
 ***Dashboard 2 includes:***
@@ -84,8 +118,11 @@ This project provides two interactive Streamlit dashboards that clean, transform
 *Daily engagement trend*
 
 -Top videos by average duration (lollipop chart)
+
 -Viewing duration distribution (violin plot)
+
 -Top videos by academic year comparison
+
 -Repeat-user analysis
 
 **6. Enable Data Export**
@@ -101,8 +138,13 @@ The project is organized with separate app files, a data directory, asset folder
 These dashboards allow FreeFuse to:
 
 -Identify high-performing and low-performing content.
+
 -Observe when users are most engaged throughout the day and week.
+
 -Understand trends across academic years.
+
 -Measure content completion, questionnaire engagement, and retention.
+
 -Report insights clearly to internal teams, educators, and partner organizations.
+
 -Make informed product, content, and operational decisions using real data.
