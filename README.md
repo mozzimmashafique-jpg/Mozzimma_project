@@ -1,6 +1,7 @@
 streamlit app 
 
 **FreeFuse Engagement Analytics – Streamlit Dashboards**
+
 A dual-dashboard analytics suite for understanding watch behavior, engagement, and viewing patterns on the FreeFuse learning platform.
 
 **Problem Statement**
